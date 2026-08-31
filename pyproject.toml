@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-militarypay"
+version = "0.1.0"
+description = "MCP server for U.S. military pay rate tables (DFAS basic pay & BAS, DTMO BAH)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+militarypay-ingest = "mcp_militarypay.cli:main"
+militarypay-mcp = "mcp_militarypay.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mcp_militarypay = ["schema.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
