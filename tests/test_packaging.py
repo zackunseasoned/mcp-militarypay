@@ -156,3 +156,53 @@ class TestPinnedInterpreter:
 
     def test_portable_command_is_still_available(self, manifest, builder):
         assert manifest["server"]["mcp_config"]["command"] == builder.PORTABLE_COMMAND
+
+
+class TestBuiltArchive:
+    """A bundle a host rejects as 'no manifest' is indistinguishable from one
+    that is merely wrong, so the packer reads its own output back."""
+
+    @pytest.fixture(scope="class")
+    def archive(self, tmp_path_factory):
+        """Pack a staging tree without vendoring - pip is far too slow here."""
+        import json
+        import zipfile
+
+        builder = _load_builder()
+        staging = tmp_path_factory.mktemp("staging")
+        (staging / "server").mkdir()
+        (staging / "lib" / "somepkg").mkdir(parents=True)
+        (staging / "manifest.json").write_text(
+            json.dumps(builder.build_manifest("0.1.0", "python"))
+        )
+        (staging / "server" / "main.py").write_text("pass\n")
+        (staging / "lib" / "somepkg" / "__init__.py").write_text("")
+
+        bundle = tmp_path_factory.mktemp("dist") / "test.mcpb"
+        manifest_path = staging / "manifest.json"
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(manifest_path, "manifest.json")
+            for path in sorted(staging.rglob("*")):
+                if path != manifest_path and path.is_file():
+                    zf.write(path, path.relative_to(staging).as_posix())
+        return zipfile.ZipFile(bundle)
+
+    def test_manifest_is_the_first_entry(self, archive):
+        """A reader scanning the start of the archive should not have to walk
+        several thousand vendored files to find it."""
+        assert archive.namelist()[0] == "manifest.json"
+
+    def test_manifest_is_at_the_archive_root(self, archive):
+        assert "manifest.json" in archive.namelist()
+
+    def test_entry_names_use_forward_slashes(self, archive):
+        """A zip entry name is not an OS path; a strict reader will not find
+        'server\\main.py'."""
+        assert not any("\\" in name for name in archive.namelist())
+        assert "server/main.py" in archive.namelist()
+
+    def test_the_declared_entry_point_is_present(self, archive):
+        import json
+
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["server"]["entry_point"] in archive.namelist()

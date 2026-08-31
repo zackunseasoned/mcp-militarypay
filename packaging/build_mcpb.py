@@ -233,10 +233,50 @@ def main() -> int:
 
     if bundle.exists():
         bundle.unlink()
+    manifest_path = staging / "manifest.json"
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
+        # manifest.json goes in first. A reader that inspects the start of the
+        # archive, rather than its central directory, then finds it immediately
+        # instead of after several thousand vendored files.
+        archive.write(manifest_path, "manifest.json")
         for path in sorted(staging.rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts:
-                archive.write(path, path.relative_to(staging))
+            if path == manifest_path or not path.is_file():
+                continue
+            if "__pycache__" in path.parts:
+                continue
+            # Always forward slashes: a zip entry name is not an OS path, and a
+            # strict reader will not find "server\\main.py".
+            archive.write(path, path.relative_to(staging).as_posix())
+
+    # Read the finished archive back rather than trusting what we meant to
+    # write: a bundle a host rejects as having no manifest is otherwise
+    # indistinguishable from one that is simply wrong.
+    with zipfile.ZipFile(bundle) as archive:
+        names = archive.namelist()
+        if "manifest.json" not in names:
+            print(f"ERROR: no manifest.json at the root of {bundle}; "
+                  f"first entries were {names[:5]}", file=sys.stderr)
+            return 1
+        if any("\\" in name for name in names):
+            print("ERROR: archive contains backslash entry names", file=sys.stderr)
+            return 1
+        try:
+            packed = json.loads(archive.read("manifest.json"))
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: manifest.json in the bundle is not valid JSON: {exc}",
+                  file=sys.stderr)
+            return 1
+        for field in ("manifest_version", "name", "version", "description",
+                      "author", "server"):
+            if field not in packed:
+                print(f"ERROR: packed manifest is missing {field!r}", file=sys.stderr)
+                return 1
+        entry = packed["server"]["entry_point"]
+        if entry not in names:
+            print(f"ERROR: entry_point {entry!r} is not in the archive",
+                  file=sys.stderr)
+            return 1
+    print(f"verified: archive holds a valid manifest.json and {entry}")
 
     if not args.keep_staging:
         shutil.rmtree(staging)
