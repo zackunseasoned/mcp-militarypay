@@ -87,12 +87,26 @@ python -m mcp_militarypay.cli ingest \
 
 Both workbooks come from the [BAH rate lookup
 page](https://www.travel.dod.mil/Allowances/Basic-Allowance-for-Housing/BAH-Rate-Lookup/).
-Passing `--baseline-file` derives the affected areas by **diffing the two
-workbooks** rather than trusting the filename: an off-cycle publication is the
+`--baseline-file` does two jobs.
+
+First, it derives the affected areas by **diffing the two workbooks** rather
+than trusting the filename: an off-cycle publication is the
 full annual table with a handful of areas changed, so ingesting all of it would
 duplicate 337 unchanged MHAs and blur which rates actually moved. (For the 2026
 TX270 increase the diff returns exactly `TX270`.) Use `--mha` instead to name
 the areas explicitly.
+
+Second, it **restores the pre-change rates into the annual set** for those
+areas. This matters more than it sounds: DTMO republishes the annual ASCII
+bundle *in place* when a mid-year adjustment lands, so once TX270 rises in May
+the January bundle no longer exists anywhere — a freshly downloaded
+`BAH-ASCII-2026.zip` already carries the increased figure under an effective
+date of 1 January. Without the restore, `as_of=2026-03-01` returns the May rate
+for a member who was actually drawing the January one, which is precisely the
+back-pay and rate-protection question `as_of` exists to answer. The baseline
+workbook is the only surviving record of the original rates. Only rows that
+already exist are updated, only where the value differs, and the ingest reports
+how many were corrected. `--no-restore-annual` opts out.
 
 Lookups then pick the most recent rate set covering that MHA, while every other
 MHA keeps the annual rate. Pass `as_of` to a lookup to get the rate in effect on
@@ -282,7 +296,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-245 tests, no network required — the parsers run against fixtures in
+251 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

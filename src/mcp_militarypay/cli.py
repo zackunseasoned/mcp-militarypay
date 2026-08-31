@@ -74,6 +74,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
                 baseline_xlsx_bytes=(
                     Path(args.baseline_file).read_bytes() if args.baseline_file else None
                 ),
+                restore_annual_baseline=not args.no_restore_annual,
             ))
         else:
             results.append(ingest_module.ingest_bah(
@@ -500,6 +501,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--from-file",
                           help="Load from a local file instead of the network. "
                                "An .xlsx is read as a DTMO rates workbook.")
+    p_ingest.add_argument("--no-restore-annual", action="store_true",
+                          help="Do not write the baseline workbook's pre-change "
+                               "rates back into the annual set for the affected "
+                               "areas. DTMO republishes the annual bundle in "
+                               "place, so without this restore an as-of query "
+                               "before the effective date returns the new rate.")
     p_ingest.add_argument("--baseline-file",
                           help="Annual workbook to diff an off-cycle .xlsx against, "
                                "so the affected MHAs are derived rather than assumed.")

@@ -300,6 +300,56 @@ def ingest_all(conn: sqlite3.Connection, year: int, *, refresh: bool = False) ->
     return results
 
 
+def _restore_annual_baseline(
+    conn: sqlite3.Connection,
+    year: int,
+    baseline: "bah_xlsx_parser.BahWorkbook",
+    mha_codes: set[str],
+) -> tuple[str | None, int]:
+    """Put the pre-change rates back into the annual set for these areas.
+
+    DTMO overwrites the annual ASCII bundle in place when a mid-year adjustment
+    lands, so once TX270 rises in May the January bundle no longer exists: an
+    `as_of` query for March returns the May rate. The pre-change figures survive
+    only in the baseline workbook, which is what this writes back.
+
+    Only rows that already exist in the annual set are updated, and only where
+    the value actually differs, so this cannot invent an MHA or a grade.
+    """
+    row = conn.execute(
+        "SELECT id FROM bah_rate_set WHERE year = ? AND is_annual_baseline = 1 "
+        "ORDER BY effective_date LIMIT 1",
+        (year,),
+    ).fetchone()
+    if row is None:
+        return None, 0
+    annual_id = row["id"]
+
+    changed = 0
+    for sheet in (baseline.with_dependents, baseline.without_dependents):
+        if sheet is None:
+            continue
+        dependants = 1 if sheet.with_dependents else 0
+        for (mha, grade), rate in sheet.rates.items():
+            if mha not in mha_codes:
+                continue
+            current = conn.execute(
+                "SELECT monthly_rate FROM bah_rates WHERE rate_set = ? AND "
+                "mha_code = ? AND pay_grade = ? AND with_dependents = ?",
+                (annual_id, mha, grade, dependants),
+            ).fetchone()
+            if current is None or current["monthly_rate"] == rate:
+                continue
+            conn.execute(
+                "UPDATE bah_rates SET monthly_rate = ? WHERE rate_set = ? AND "
+                "mha_code = ? AND pay_grade = ? AND with_dependents = ?",
+                (rate, annual_id, mha, grade, dependants),
+            )
+            changed += 1
+    return annual_id, changed
+
+
+
 def ingest_bah_workbook(
     conn: sqlite3.Connection,
     year: int,
@@ -311,6 +361,7 @@ def ingest_bah_workbook(
     baseline_xlsx_bytes: bytes | None = None,
     restrict_to_mha: list[str] | None = None,
     is_annual_baseline: bool = False,
+    restore_annual_baseline: bool = True,
     url: str | None = None,
 ) -> IngestResult:
     """Ingest a BAH rate set from the DTMO Excel workbook.
@@ -337,8 +388,12 @@ def ingest_bah_workbook(
         keep: set[str] | None = None
         if restrict_to_mha:
             keep = {m.upper() for m in restrict_to_mha}
-        elif baseline_xlsx_bytes is not None:
+        baseline = None
+        if baseline_xlsx_bytes is not None:
             baseline = bah_xlsx_parser.parse_bah_workbook(baseline_xlsx_bytes)
+        if restrict_to_mha:
+            pass
+        elif baseline is not None:
             changed = bah_xlsx_parser.diff_workbooks(baseline, workbook)
             keep = changed["with_dependents"] | changed["without_dependents"]
             if not keep:
@@ -397,6 +452,30 @@ def ingest_bah_workbook(
     warnings = list(workbook.warnings)
     if keep is not None:
         warnings.append(f"restricted to {len(keep)} MHA(s): {sorted(keep)}")
+
+    # DTMO republishes the annual bundle in place, so the annual set now holds
+    # the post-change rates for these areas and an `as_of` query before the
+    # effective date would return them. The baseline workbook is the only
+    # surviving record of the original figures.
+    if restore_annual_baseline and baseline is not None and keep:
+        annual_id, corrected = _restore_annual_baseline(conn, year, baseline, keep)
+        if annual_id is None:
+            warnings.append(
+                f"no annual baseline rate set for {year}, so the pre-change "
+                f"rates could not be restored"
+            )
+        elif corrected:
+            warnings.append(
+                f"restored {corrected} pre-change rate(s) for {sorted(keep)} into "
+                f"the '{annual_id}' set from the baseline workbook - the "
+                f"republished annual bundle had already been overwritten with "
+                f"the updated figures"
+            )
+        else:
+            warnings.append(
+                f"the '{annual_id}' set already held the pre-change rates for "
+                f"{sorted(keep)}; nothing to restore"
+            )
     if is_annual_baseline:
         warnings.append(
             "marked as the annual baseline, but the workbook carries no "

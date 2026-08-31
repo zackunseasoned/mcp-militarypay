@@ -286,3 +286,135 @@ class TestWorkbookIngest:
         )
         assert result.ok is True
         assert any("crosswalk" in w for w in result.warnings)
+
+
+class TestAnnualBaselineRestore:
+    """DTMO republishes the annual bundle in place when a mid-year adjustment
+    lands, so the annual set silently acquires the post-change rates and an
+    as-of query before the effective date returns them. The pre-change figures
+    survive only in the baseline workbook."""
+
+    def _seed_republished_annual(self, conn, updated_bytes):
+        """An annual set already carrying the post-change rates, as the
+        republished ASCII bundle does."""
+        return ingest.ingest_bah_workbook(
+            conn, 2026, xlsx_bytes=updated_bytes, rate_set_id="2026",
+            effective_date="2026-01-01", is_annual_baseline=True,
+        )
+
+    def test_pre_change_rates_are_restored_into_the_annual_set(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        self._seed_republished_annual(blank, bah_workbook_increase_bytes)
+        overwritten = blank.execute(
+            "SELECT monthly_rate FROM bah_rates WHERE rate_set='2026' AND "
+            "mha_code='TX270' AND pay_grade='E-5' AND with_dependents=1"
+        ).fetchone()["monthly_rate"]
+
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        assert result.ok is True
+        assert any("restored" in w for w in result.warnings)
+
+        restored = blank.execute(
+            "SELECT monthly_rate FROM bah_rates WHERE rate_set='2026' AND "
+            "mha_code='TX270' AND pay_grade='E-5' AND with_dependents=1"
+        ).fetchone()["monthly_rate"]
+        assert restored < overwritten
+
+    def test_as_of_before_the_increase_returns_the_january_rate(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        from mcp_militarypay import queries as q
+
+        self._seed_republished_annual(blank, bah_workbook_increase_bytes)
+        blank.execute(
+            "INSERT OR REPLACE INTO zip_to_mha(rate_set, zip_code, mha_code) "
+            "VALUES('2026', '79601', 'TX270')"
+        )
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        current = q.get_bah(blank, "79601", "E-5", True)
+        earlier = q.get_bah(blank, "79601", "E-5", True, as_of="2026-03-01")
+        assert current["rate_set"] == "2026-abilene-temp"
+        assert earlier["rate_set"] == "2026"
+        assert earlier["monthly_rate"] < current["monthly_rate"]
+
+    def test_unaffected_areas_are_left_alone(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        self._seed_republished_annual(blank, bah_workbook_increase_bytes)
+        before = dict(blank.execute(
+            "SELECT pay_grade, monthly_rate FROM bah_rates WHERE rate_set='2026' "
+            "AND mha_code='CA606' AND with_dependents=1").fetchall())
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        after = dict(blank.execute(
+            "SELECT pay_grade, monthly_rate FROM bah_rates WHERE rate_set='2026' "
+            "AND mha_code='CA606' AND with_dependents=1").fetchall())
+        assert before == after
+
+    def test_restore_can_be_declined(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        self._seed_republished_annual(blank, bah_workbook_increase_bytes)
+        before = blank.execute(
+            "SELECT monthly_rate FROM bah_rates WHERE rate_set='2026' AND "
+            "mha_code='TX270' AND pay_grade='E-5' AND with_dependents=1"
+        ).fetchone()["monthly_rate"]
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+            restore_annual_baseline=False,
+        )
+        after = blank.execute(
+            "SELECT monthly_rate FROM bah_rates WHERE rate_set='2026' AND "
+            "mha_code='TX270' AND pay_grade='E-5' AND with_dependents=1"
+        ).fetchone()["monthly_rate"]
+        assert after == before
+
+    def test_an_untouched_annual_set_reports_nothing_to_restore(
+        self, blank, bah_zip_bytes, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        """When the annual bundle was captured before the republish, its rates
+        already are the January ones."""
+        from mcp_militarypay.parsers.bah_xlsx import parse_bah_workbook
+
+        ingest.ingest_bah(blank, 2026, zip_bytes=bah_zip_bytes)
+        # Align the ASCII-sourced annual rows with the baseline workbook, as
+        # they would be had the bundle been captured before the republish.
+        baseline = parse_bah_workbook(bah_workbook_bytes)
+        for (mha, grade), rate in baseline.with_dependents.rates.items():
+            blank.execute(
+                "UPDATE bah_rates SET monthly_rate = ? WHERE rate_set = '2026' "
+                "AND mha_code = ? AND pay_grade = ? AND with_dependents = 1",
+                (rate, mha, grade),
+            )
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        assert any("nothing to restore" in w for w in result.warnings)
+
+    def test_restore_never_invents_rows(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        """With no annual set present there is nothing to correct."""
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        assert any("no annual baseline rate set" in w for w in result.warnings)
+        assert count(blank, "bah_rates", "WHERE rate_set = ?", ("2026",)) == 0
