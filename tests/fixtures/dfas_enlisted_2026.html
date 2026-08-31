@@ -1,0 +1,84 @@
+<!doctype html>
+<!--
+  SYNTHETIC TEST FIXTURE - not a copy of the live DFAS page and not a rate source.
+  It reproduces the *structure* documented in the build spec so the parser can be
+  exercised offline: the grid split across two <table> elements joined on pay
+  grade, footnote markers inside grade cells, legitimately empty cells for
+  grade/YOS combinations that do not exist, and the footnotes that carry real
+  entitlement logic.
+
+  Only these figures are the spec's verified values:
+    E-5 Over 4      = 3,946.80
+    E-1 (>=4 mo)    = 2,407.20
+    E-1 (<4 months) = 2,225.70
+    Senior enlisted advisor flat rate = 11,166.90
+  Every other number below is filler chosen to be obviously non-real.
+-->
+<html>
+  <head><title>Basic Pay Rates - Enlisted</title></head>
+  <body>
+    <h1>Basic Pay &ndash; Enlisted</h1>
+    <p>Effective January 1, 2026</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Pay Grade</th>
+          <th>2 or less</th>
+          <th>Over 2</th>
+          <th>Over 3</th>
+          <th>Over 4</th>
+          <th>Over 6</th>
+          <th>Over 8</th>
+          <th>Over 10</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>E-9 (Notes 2 &amp; 3)</td><td></td><td></td><td></td><td></td><td></td><td></td><td>1,000.10</td></tr>
+        <tr><td>E-8</td><td></td><td></td><td></td><td></td><td></td><td>1,100.10</td><td>1,100.20</td></tr>
+        <tr><td>E-7</td><td>1,200.10</td><td>1,200.20</td><td>1,200.30</td><td>1,200.40</td><td>1,200.50</td><td>1,200.60</td><td>1,200.70</td></tr>
+        <tr><td>E-6</td><td>1,300.10</td><td>1,300.20</td><td>1,300.30</td><td>1,300.40</td><td>1,300.50</td><td>1,300.60</td><td>1,300.70</td></tr>
+        <tr><td>E-5</td><td>1,400.10</td><td>1,400.20</td><td>1,400.30</td><td>3,946.80</td><td>1,400.50</td><td>1,400.60</td><td>1,400.70</td></tr>
+        <tr><td>E-4</td><td>1,500.10</td><td>1,500.20</td><td>1,500.30</td><td>1,500.40</td><td>1,500.50</td><td>1,500.60</td><td>1,500.70</td></tr>
+        <tr><td>E-3</td><td>1,600.10</td><td>1,600.20</td><td>1,600.30</td><td>1,600.40</td><td>1,600.50</td><td>1,600.60</td><td>1,600.70</td></tr>
+        <tr><td>E-2</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td></tr>
+        <tr><td>E-1 (Notes 4 &amp; 5)</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Pay Grade</th>
+          <th>Over 20</th>
+          <th>Over 22</th>
+          <th>Over 24</th>
+          <th>Over 26</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>E-9 (Notes 2 &amp; 3)</td><td>1,000.80</td><td>1,000.90</td><td>1,001.00</td><td>1,001.10</td></tr>
+        <tr><td>E-8</td><td>1,100.80</td><td>1,100.90</td><td>1,101.00</td><td>1,101.10</td></tr>
+        <tr><td>E-7</td><td>1,200.80</td><td>1,200.90</td><td>1,201.00</td><td>1,201.10</td></tr>
+        <tr><td>E-6</td><td>1,300.80</td><td>1,300.90</td><td>1,301.00</td><td>1,301.10</td></tr>
+        <tr><td>E-5</td><td>1,400.80</td><td>1,400.90</td><td>1,401.00</td><td>1,401.10</td></tr>
+        <tr><td>E-4</td><td>1,500.80</td><td>1,500.90</td><td>1,501.00</td><td>1,501.10</td></tr>
+        <tr><td>E-3</td><td>1,600.80</td><td>1,600.90</td><td>1,601.00</td><td>1,601.10</td></tr>
+        <tr><td>E-2</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td><td>1,700.10</td></tr>
+        <tr><td>E-1 (Notes 4 &amp; 5)</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td><td>2,407.20</td></tr>
+      </tbody>
+    </table>
+
+    <!-- Site furniture that surrounds the real notes on the live pages. Both
+         contain the word "Note", so a keyword filter alone lets them through. -->
+    <div>Home MilitaryMembers payentitlements Pay Tables Basic Pay EM</div>
+    <span>Cumulative Years of Service (Note 1)</span>
+
+    <!-- The E-1 note stands alone on the live enlisted page. -->
+    <p>Basic pay for an E-1 with less than 4 months of active duty is $2,225.70.</p>
+
+    <!-- A multi-note NOTES block, as the live warrant/officer pages carry.
+         Earlier this was silently dropped by a 600-character cap. -->
+    <p>NOTES: 1. For rank titles, see Volume 7A Comparable Grades. 2. Basic pay for senior enlisted member (grade E-9) is $11,166.90 regardless of years of service while serving as: a. Senior Enlisted Advisor of the Chairman, Joint Chiefs of Staff; b. Sergeant Major of the Army; c. Master Chief Petty Officer of the Navy; d. Chief Master Sergeant of the Air Force; e. Sergeant Major of the Marine Corps; f. Chief Master Sergeant of the Space Force; g. Master Chief Petty Officer of the Coast Guard; or h. Senior Enlisted Advisor to the Chief of the National Guard Bureau. 3. If a member is placed on terminal leave pending retirement immediately following the completion of service as the senior enlisted member of a Military Department, the member is entitled to the higher senior enlisted pay $11,166.90 up to a maximum of 60 days. 4. Must have 4 months of active duty or more. 5. Basic pay is limited to the rate of basic pay for level II of the Executive Schedule.</p>
+  </body>
+</html>

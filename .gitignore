@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Built rate database and HTTP cache - rebuilt by the ingest, never committed.
+data/
+
+# Databases built by CI or a local run
+*.sqlite3
+
+# Built bundles
+dist/
