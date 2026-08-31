@@ -15,6 +15,9 @@ dependencies = [
     # http2 extra: the DoD WAF fingerprints clients, and an agent claiming to
     # be Chrome while speaking HTTP/1.1 is a mismatch it can notice.
     "httpx[http2]>=0.27",
+    # Reading the DTMO rates workbook, which is the only published form the
+    # off-cycle BAH adjustments appear in.
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]

@@ -63,13 +63,26 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if not args.effective_date:
             print("--bah-offcycle requires --effective-date", file=sys.stderr)
             return 2
-        zip_bytes = Path(args.from_file).read_bytes() if args.from_file else None
-        results.append(ingest_module.ingest_bah(
-            conn, year, zip_bytes=zip_bytes, url=args.url,
-            rate_set_id=args.bah_offcycle, effective_date=args.effective_date,
-            label=args.label, is_annual_baseline=False,
-            restrict_to_mha=args.mha, refresh=args.refresh,
-        ))
+        source = Path(args.from_file) if args.from_file else None
+        if source is not None and source.suffix.lower() in (".xlsx", ".xlsm"):
+            # DTMO publishes off-cycle adjustments as an updated Excel workbook,
+            # not as a separate ASCII bundle.
+            results.append(ingest_module.ingest_bah_workbook(
+                conn, year, xlsx_bytes=source.read_bytes(),
+                rate_set_id=args.bah_offcycle, effective_date=args.effective_date,
+                label=args.label, url=args.url, restrict_to_mha=args.mha,
+                baseline_xlsx_bytes=(
+                    Path(args.baseline_file).read_bytes() if args.baseline_file else None
+                ),
+            ))
+        else:
+            results.append(ingest_module.ingest_bah(
+                conn, year, zip_bytes=source.read_bytes() if source else None,
+                url=args.url, rate_set_id=args.bah_offcycle,
+                effective_date=args.effective_date, label=args.label,
+                is_annual_baseline=False, restrict_to_mha=args.mha,
+                refresh=args.refresh,
+            ))
 
     print()
     for result in results:
@@ -484,7 +497,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--mha", nargs="+", help="Restrict an off-cycle set to these MHA codes.")
     p_ingest.add_argument("--year", type=int, help="Rate year (default: current year).")
     p_ingest.add_argument("--url", help="Override the source URL.")
-    p_ingest.add_argument("--from-file", help="Load from a local file instead of the network.")
+    p_ingest.add_argument("--from-file",
+                          help="Load from a local file instead of the network. "
+                               "An .xlsx is read as a DTMO rates workbook.")
+    p_ingest.add_argument("--baseline-file",
+                          help="Annual workbook to diff an off-cycle .xlsx against, "
+                               "so the affected MHAs are derived rather than assumed.")
     p_ingest.add_argument("--refresh", action="store_true", help="Bypass the HTTP cache.")
     p_ingest.add_argument("--allow-year-mismatch", action="store_true",
                           help="Store a page under --year even though the page "

@@ -26,6 +26,16 @@ def bah_zip_bytes() -> bytes:
     return (FIXTURES / "BAH-ASCII-2026.zip").read_bytes()
 
 
+@pytest.fixture(scope="session")
+def bah_workbook_bytes() -> bytes:
+    return (FIXTURES / "2026_BAH_Rates.xlsx").read_bytes()
+
+
+@pytest.fixture(scope="session")
+def bah_workbook_increase_bytes() -> bytes:
+    return (FIXTURES / "2026_BAH_Rates_TX270_increase.xlsx").read_bytes()
+
+
 @pytest.fixture
 def db_path(tmp_path, enlisted_html, bas_html, bah_zip_bytes) -> Path:
     """A database built from the fixtures, including the off-cycle rate set."""

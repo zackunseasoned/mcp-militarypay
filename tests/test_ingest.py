@@ -195,3 +195,94 @@ class TestYearMismatch:
     def test_matching_year_is_untouched(self, blank, enlisted_html):
         assert ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html,
                                       year=2026).ok is True
+
+
+class TestWorkbookIngest:
+    """Off-cycle adjustments are published only as an updated Excel workbook."""
+
+    def test_diffing_the_workbooks_restricts_to_the_changed_area(
+        self, blank, bah_zip_bytes, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        ingest.ingest_bah(blank, 2026, zip_bytes=bah_zip_bytes)
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+            label="2026 Abilene Temporary Increase",
+        )
+        assert result.ok is True
+        # 27 grades x 2 dependency statuses, for the one changed MHA.
+        assert result.rows == 54
+        assert count(blank, "bah_rates", "WHERE rate_set = ?", ("2026-abilene-temp",)) == 54
+        mhas = {r[0] for r in blank.execute(
+            "SELECT DISTINCT mha_code FROM bah_rates WHERE rate_set = ?",
+            ("2026-abilene-temp",))}
+        assert mhas == {"TX270"}
+
+    def test_the_off_cycle_set_wins_for_its_own_mha_only(
+        self, blank, bah_zip_bytes, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        from mcp_militarypay import queries as q
+
+        ingest.ingest_bah(blank, 2026, zip_bytes=bah_zip_bytes)
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        affected = q.get_bah(blank, "79601", "E-5", True)
+        assert affected["rate_set"] == "2026-abilene-temp"
+        assert affected["effective_date"] == "2026-05-16"
+
+        earlier = q.get_bah(blank, "79601", "E-5", True, as_of="2026-03-01")
+        assert earlier["rate_set"] == "2026"
+
+        elsewhere = q.get_bah(blank, "92101", "E-5", True)
+        assert elsewhere["rate_set"] == "2026"
+
+    def test_senior_officer_grades_do_not_fall_back_to_the_annual_set(
+        self, blank, bah_zip_bytes, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        """The workbook stops at O-7; without expansion an O-8 lookup would miss
+        the off-cycle set and silently serve the superseded annual rate."""
+        from mcp_militarypay import queries as q
+
+        ingest.ingest_bah(blank, 2026, zip_bytes=bah_zip_bytes)
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        for grade in ("O-7", "O-8", "O-9", "O-10"):
+            assert q.get_bah(blank, "79601", grade, True)["rate_set"] == "2026-abilene-temp"
+
+    def test_identical_workbooks_are_refused(self, blank, bah_workbook_bytes):
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="nothing-changed", effective_date="2026-05-16",
+        )
+        assert result.ok is False
+        assert "identical" in result.error
+        assert count(blank, "bah_rates") == 0
+
+    def test_workbook_sets_write_no_zip_crosswalk(
+        self, blank, bah_workbook_bytes, bah_workbook_increase_bytes
+    ):
+        ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_increase_bytes,
+            baseline_xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-abilene-temp", effective_date="2026-05-16",
+        )
+        assert count(blank, "zip_to_mha") == 0
+
+    def test_marking_a_workbook_set_as_baseline_warns_about_the_crosswalk(
+        self, blank, bah_workbook_bytes
+    ):
+        result = ingest.ingest_bah_workbook(
+            blank, 2026, xlsx_bytes=bah_workbook_bytes,
+            rate_set_id="2026-xlsx", effective_date="2026-01-01",
+            is_annual_baseline=True,
+        )
+        assert result.ok is True
+        assert any("crosswalk" in w for w in result.warnings)

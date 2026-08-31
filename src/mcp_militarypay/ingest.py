@@ -14,6 +14,7 @@ from . import sources
 from .db import log_fetch, utcnow
 from .fetch import fetch_bytes, fetch_text
 from .parsers import bah as bah_parser
+from .parsers import bah_xlsx as bah_xlsx_parser
 from .parsers import bas as bas_parser
 from .parsers import basepay as basepay_parser
 
@@ -297,3 +298,113 @@ def ingest_all(conn: sqlite3.Connection, year: int, *, refresh: bool = False) ->
     results.append(ingest_bas(conn, refresh=refresh))
     results.append(ingest_bah(conn, year, refresh=refresh))
     return results
+
+
+def ingest_bah_workbook(
+    conn: sqlite3.Connection,
+    year: int,
+    *,
+    xlsx_bytes: bytes,
+    rate_set_id: str,
+    effective_date: str,
+    label: str | None = None,
+    baseline_xlsx_bytes: bytes | None = None,
+    restrict_to_mha: list[str] | None = None,
+    is_annual_baseline: bool = False,
+    url: str | None = None,
+) -> IngestResult:
+    """Ingest a BAH rate set from the DTMO Excel workbook.
+
+    This is how off-cycle adjustments get in: DTMO publishes them as an updated
+    workbook (e.g. "2026 BAH Rates - Updated with TX270 Temporary Increase"),
+    not as a separate ASCII bundle.
+
+    Pass baseline_xlsx_bytes to derive the affected areas by diffing the two
+    workbooks rather than trusting the filename - an off-cycle publication is
+    the full annual table with a few areas changed, so ingesting all of it would
+    duplicate 337 unchanged MHAs and blur which rates actually moved.
+
+    The workbook carries no ZIP-to-MHA crosswalk, so a set ingested this way is
+    not an annual baseline by default; ZIP resolution goes through the annual
+    set that does have one.
+    """
+    url = url or sources.BAH_LOOKUP_PAGE
+    fetched_at = utcnow()
+    source_name = f"bah:{rate_set_id}"
+
+    try:
+        workbook = bah_xlsx_parser.parse_bah_workbook(xlsx_bytes)
+        keep: set[str] | None = None
+        if restrict_to_mha:
+            keep = {m.upper() for m in restrict_to_mha}
+        elif baseline_xlsx_bytes is not None:
+            baseline = bah_xlsx_parser.parse_bah_workbook(baseline_xlsx_bytes)
+            changed = bah_xlsx_parser.diff_workbooks(baseline, workbook)
+            keep = changed["with_dependents"] | changed["without_dependents"]
+            if not keep:
+                message = (
+                    "the two workbooks are identical - no off-cycle change to "
+                    "ingest. Check that the updated workbook is the right file."
+                )
+                log_fetch(conn, source=source_name, url=url, ok=False,
+                          notes=message, fetched_at=fetched_at)
+                conn.commit()
+                return IngestResult(source_name, ok=False, error=message)
+    except Exception as exc:  # noqa: BLE001
+        log_fetch(conn, source=source_name, url=url, ok=False, notes=str(exc),
+                  fetched_at=fetched_at)
+        conn.commit()
+        return IngestResult(source_name, ok=False, error=str(exc))
+
+    if keep:
+        available = workbook.with_dependents.mha_codes | workbook.without_dependents.mha_codes
+        missing = keep - available
+        if missing:
+            message = f"MHAs absent from the workbook: {sorted(missing)}"
+            log_fetch(conn, source=source_name, url=url, ok=False, notes=message,
+                      fetched_at=fetched_at)
+            conn.commit()
+            return IngestResult(source_name, ok=False, error=message)
+
+    conn.execute("DELETE FROM bah_rates WHERE rate_set = ?", (rate_set_id,))
+    conn.execute("DELETE FROM zip_to_mha WHERE rate_set = ?", (rate_set_id,))
+    conn.execute(
+        "INSERT INTO bah_rate_set(id, year, effective_date, label, "
+        "is_annual_baseline, source_url, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "  year=excluded.year, effective_date=excluded.effective_date, "
+        "  label=excluded.label, is_annual_baseline=excluded.is_annual_baseline, "
+        "  source_url=excluded.source_url, fetched_at=excluded.fetched_at",
+        (rate_set_id, year, effective_date, label or workbook.title,
+         1 if is_annual_baseline else 0, url, fetched_at),
+    )
+
+    rows = 0
+    for sheet in (workbook.with_dependents, workbook.without_dependents):
+        payload = [
+            (rate_set_id, mha, workbook.mha_names.get(mha), grade,
+             1 if sheet.with_dependents else 0, rate)
+            for (mha, grade), rate in sheet.rates.items()
+            if keep is None or mha in keep
+        ]
+        conn.executemany(
+            "INSERT INTO bah_rates(rate_set, mha_code, mha_name, pay_grade, "
+            "with_dependents, monthly_rate) VALUES (?, ?, ?, ?, ?, ?)",
+            payload,
+        )
+        rows += len(payload)
+
+    warnings = list(workbook.warnings)
+    if keep is not None:
+        warnings.append(f"restricted to {len(keep)} MHA(s): {sorted(keep)}")
+    if is_annual_baseline:
+        warnings.append(
+            "marked as the annual baseline, but the workbook carries no "
+            "ZIP-to-MHA crosswalk - ZIP lookups will fail unless an ASCII "
+            "bundle is ingested for this year too"
+        )
+
+    log_fetch(conn, source=source_name, url=url, ok=True, row_count=rows,
+              notes="; ".join(warnings) or None, fetched_at=fetched_at)
+    conn.commit()
+    return IngestResult(source_name, ok=True, rows=rows, warnings=warnings)

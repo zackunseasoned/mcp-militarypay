@@ -63,4 +63,11 @@ jobs:
             --bas --from-file tests/fixtures/dfas_bas.html
           python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
             --bah --year 2026 --from-file tests/fixtures/BAH-ASCII-2026.zip
+          # The off-cycle path: an updated workbook diffed against the annual
+          # one, which is how DTMO publishes mid-year adjustments.
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --bah-offcycle 2026-abilene-temp --effective-date 2026-05-16 \
+            --label "2026 Abilene Temporary Increase" --year 2026 \
+            --from-file tests/fixtures/2026_BAH_Rates_TX270_increase.xlsx \
+            --baseline-file tests/fixtures/2026_BAH_Rates.xlsx
           python -m mcp_militarypay.cli --db ci.sqlite3 verify

@@ -100,14 +100,14 @@ def bah_inner_filenames(year: int) -> dict[str, str]:
 # the delimiter, the CHAR(5) MHA key, and this grade order, including the
 # counterintuitive part: O1E/O2E/O3E come BEFORE O1 and onwards.
 #
-# One discrepancy. That PDF's field list ends at O7, giving 25 fields, and it
-# runs off the bottom of its single page mid-list - so it appears truncated at
-# the page break rather than deliberately stopping there. The published files
-# carry 28 fields: the 2026 bundle parsed at exactly 28 across all 338 MHAs
-# (18,252 rows = 338 x 27 grades x 2 dependency statuses, with no remainder), and
-# a 25-field file would have failed the field-count check on line 1. The data
-# wins; the extra columns are the senior officer grades that the DTMO rate
-# lookup collapses into its "O-7/O-7+" bucket, and they carry the O-7 value.
+# That PDF's field list ends at O7, giving 25 fields, where the published ASCII
+# files carry 28. Because the list also runs off the bottom of its single page,
+# it looked truncated at the page break - but it is not. DTMO's Excel workbook
+# independently publishes exactly 24 rate columns ending at O07, so O-7 really
+# is the last distinct grade: the ASCII files simply pad three more columns that
+# repeat the O-7 value, which is DTMO's "O-7/O-7+" bucket. Reading the ASCII
+# tail as O-8/O-9/O-10 therefore yields correct rates either way, and `verify`
+# checks that those four columns agree within every MHA.
 #
 # Field 0 is the MHA code; fields 1..27 are monthly rates in this grade order.
 BAH_RATE_COLUMNS: tuple[str, ...] = (

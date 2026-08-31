@@ -80,9 +80,19 @@ python -m mcp_militarypay.cli ingest \
     --bah-offcycle 2026-abilene-temp \
     --effective-date 2026-05-16 \
     --label "2026 Abilene Temporary Increase" \
-    --mha TX270 \
-    --url <bundle-url-from-the-DTMO-year-dropdown>
+    --year 2026 \
+    --from-file "2026_BAH_Rates__Updated_with_TX270_Temporary_Increase.xlsx" \
+    --baseline-file "2026_BAH_Rates.xlsx"
 ```
+
+Both workbooks come from the [BAH rate lookup
+page](https://www.travel.dod.mil/Allowances/Basic-Allowance-for-Housing/BAH-Rate-Lookup/).
+Passing `--baseline-file` derives the affected areas by **diffing the two
+workbooks** rather than trusting the filename: an off-cycle publication is the
+full annual table with a handful of areas changed, so ingesting all of it would
+duplicate 337 unchanged MHAs and blur which rates actually moved. (For the 2026
+TX270 increase the diff returns exactly `TX270`.) Use `--mha` instead to name
+the areas explicitly.
 
 Lookups then pick the most recent rate set covering that MHA, while every other
 MHA keeps the annual rate. Pass `as_of` to a lookup to get the rate in effect on
@@ -197,13 +207,28 @@ DTMO does publish a schema, but it is shipped **inside the bundle itself** as
 the `CHAR(5)` MHA key, and the grade order — including the counterintuitive
 part, that `O1E/O2E/O3E` come **before** `O1`.
 
-One discrepancy is worth knowing about: that PDF's field list stops at `O7`
-(25 fields) and runs off the bottom of its single page mid-list, so it appears
-truncated at the page break. The published files carry **28** fields. The data
-wins — the 2026 bundle parsed at exactly 28 across all 338 MHAs (18,252 rows =
-338 × 27 × 2, no remainder) — and `verify` includes a structural check that
-`O-7`…`O-10` share a rate within every MHA, which is what those extra columns
-must be if the mapping past `O-7` is right.
+That PDF's field list stops at `O7` (25 fields) where the published files carry
+**28**, and since the list also runs off the bottom of its single page it looks
+truncated. It isn't. DTMO's Excel workbook independently publishes exactly 24
+rate columns ending at `O07`, so **`O-7` really is the last distinct grade** —
+the ASCII files pad three further columns repeating the `O-7` value, which is
+DTMO's "O-7/O-7+" bucket. Reading that tail as `O-8`/`O-9`/`O-10` gives correct
+rates either way, and `verify` checks those four columns agree within every MHA.
+
+### The Excel workbook
+
+The other bulk download, and the **only** published form the off-cycle
+adjustments appear in — there is no separate ASCII bundle for, say, the 2026
+TX270 temporary increase. It is a clean grid rather than the government-Excel
+hazard the design anticipated: two sheets (`With` / `Without`), a title row, a
+header row, one row per MHA.
+
+```
+MHA | MHA_NAME | E01..E09 | W01..W05 | O01E O02E O03E | O01..O07
+```
+
+It carries **no ZIP-to-MHA crosswalk**, so a set ingested from it is not an
+annual baseline; ZIP resolution goes through the annual set that has one.
 
 `BAH-ASCII-<year>.zip` carries thirteen members; four are used:
 
@@ -257,7 +282,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-221 tests, no network required — the parsers run against fixtures in
+245 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:
