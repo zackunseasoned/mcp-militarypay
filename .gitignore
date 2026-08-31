@@ -12,3 +12,6 @@ data/
 
 # Databases built by CI or a local run
 *.sqlite3
+
+# Built bundles
+dist/

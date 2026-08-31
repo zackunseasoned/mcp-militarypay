@@ -161,6 +161,31 @@ The suite includes an integration test that launches this as a subprocess and
 speaks MCP to it over stdio, so the entry point, negotiation and error handling
 are covered on the same path a real client uses — including on Windows in CI.
 
+### Installing as an extension (recommended on Windows)
+
+The simplest route, and the one that avoids config-file trouble entirely:
+
+```bash
+python packaging/build_mcpb.py      # -> dist/militarypay-<version>.mcpb
+```
+
+Then in Claude: **Settings → Extensions → Install Extension**, pick the
+`.mcpb`, and point it at your `militarypay.sqlite3` when it asks.
+
+This matters on the Microsoft Store build of Claude, which runs in an MSIX
+container with a **virtualised `%APPDATA%`** — a hand-edited
+`claude_desktop_config.json` under `%APPDATA%\Claude\` may not be the file the
+app actually reads, and the server then never loads with nothing obvious to
+show for it. Installing a bundle goes through the app's own flow instead.
+
+Build it with the interpreter you want it to run under: dependencies are
+vendored from the running environment, so build on Windows to get Windows
+wheels. The bundle carries only what the *server* needs — it serves from an
+already-built database and never fetches, so the ingest's dependencies are left
+out. It needs no virtualenv at run time.
+
+### Registering by hand
+
 Register it with an MCP client (stdio transport):
 
 ```json
@@ -317,7 +342,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-252 tests, no network required — the parsers run against fixtures in
+267 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:
