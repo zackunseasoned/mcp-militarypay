@@ -202,15 +202,20 @@ def main() -> int:
     lib = staging / "lib"
     lib.mkdir()
 
+    # Vendor first, then write the metadata. pip has no business touching
+    # anything outside lib/, but a build was observed on Windows reaching the
+    # packing step with manifest.json gone from staging - so nothing this
+    # script needs at pack time is written before a subprocess runs.
+    print(f"vendoring dependencies with {sys.executable} ...")
+    vendor_dependencies(lib)
+
     (staging / "manifest.json").write_text(
         json.dumps(build_manifest(version, command), indent=2) + "\n",
         encoding="utf-8")
+    (staging / "server").mkdir(parents=True, exist_ok=True)
     (staging / "server" / "main.py").write_text(ENTRY_POINT, encoding="utf-8")
     (staging / "requirements.txt").write_text(
         "\n".join(SERVER_REQUIREMENTS) + "\n", encoding="utf-8")
-
-    print(f"vendoring dependencies with {sys.executable} ...")
-    vendor_dependencies(lib)
 
     # Verify before packing, and before the staging tree is removed: this is
     # the check that would have caught the wheels being built for one Python
@@ -233,7 +238,24 @@ def main() -> int:
 
     if bundle.exists():
         bundle.unlink()
+
     manifest_path = staging / "manifest.json"
+    entry_path = staging / "server" / "main.py"
+    missing = [p for p in (manifest_path, entry_path) if not p.is_file()]
+    if missing:
+        # Say what is actually on disk rather than letting zipfile raise a bare
+        # FileNotFoundError from three frames down.
+        present = sorted(p.relative_to(staging).as_posix()
+                         for p in staging.rglob("*") if p.is_file())
+        print(
+            f"\nERROR: staging is incomplete before packing. Missing: "
+            f"{[p.name for p in missing]}\n"
+            f"staging = {staging}\n"
+            f"{len(present)} file(s) present, first 10: {present[:10]}",
+            file=sys.stderr,
+        )
+        return 1
+
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as archive:
         # manifest.json goes in first. A reader that inspects the start of the
         # archive, rather than its central directory, then finds it immediately

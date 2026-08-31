@@ -213,3 +213,46 @@ class TestBuiltArchive:
 
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["server"]["entry_point"] in archive.namelist()
+
+
+class TestStagingOrder:
+    """A Windows build reached the packing step with manifest.json missing from
+    staging, and zipfile raised a bare FileNotFoundError three frames down. The
+    cause was never identified - pip only touches lib/ - so the ordering makes
+    it impossible rather than unlikely: nothing needed at pack time is written
+    before a subprocess runs."""
+
+    def test_metadata_is_written_after_vendoring(self):
+        """Read the source: the pip call must come before the manifest write."""
+        source = (ROOT / "packaging" / "build_mcpb.py").read_text()
+        body = source[source.index("def main("):]
+        vendor_at = body.index("vendor_dependencies(lib)")
+        manifest_at = body.index('(staging / "manifest.json").write_text')
+        assert vendor_at < manifest_at
+
+    def test_incomplete_staging_is_reported_not_raised(self, tmp_path, capsys):
+        """The failure names what is missing and what is actually on disk,
+        rather than surfacing as a FileNotFoundError from inside zipfile."""
+        import sys
+        from unittest import mock
+
+        builder = _load_builder()
+        real_write_text = builder.Path.write_text
+
+        def skip_metadata(self, *args, **kwargs):
+            """Simulate whatever removed the file, by never writing it."""
+            if self.name in ("manifest.json", "main.py", "requirements.txt"):
+                return 0
+            return real_write_text(self, *args, **kwargs)
+
+        argv = ["build_mcpb.py", "--out-dir", str(tmp_path / "dist"),
+                "--command", "python"]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(builder, "vendor_dependencies", lambda lib: None), \
+                mock.patch.object(builder.Path, "write_text", skip_metadata):
+            result = builder.main()
+
+        assert result == 1
+        error = capsys.readouterr().err
+        assert "staging is incomplete" in error
+        assert "manifest.json" in error
