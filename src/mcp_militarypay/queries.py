@@ -310,12 +310,26 @@ def get_bah(
         result["notes"].append(
             f"MHA {mha} is a nationwide 'common' housing area rather than a locality."
         )
+    result["notes"].append(DUTY_STATION_RULE)
     result["notes"].append(
         "BAH rate protection: a member with uninterrupted eligibility at a "
         "location does not take a decrease when published rates drop, so an "
         "individual's actual rate may be a prior year's higher rate."
     )
     return result
+
+
+# The rule that decides which ZIP to ask about at all. A member living outside
+# their duty station's housing area still draws that station's rate, so using a
+# home ZIP silently returns a different, real, wrong figure.
+DUTY_STATION_RULE = (
+    "BAH is based on the ZIP code of the member's permanent duty station, not "
+    "where they live. Someone assigned to a station but residing in another "
+    "housing area still draws the duty station's rate. Limited exceptions "
+    "exist (for example BAH based on the dependents' location for certain "
+    "unaccompanied or dependent-restricted tours); confirm an unusual case "
+    "with the servicing finance office."
+)
 
 
 def find_housing_areas(
@@ -403,6 +417,7 @@ def find_housing_areas(
         "notes": [
             "Pass any of the example ZIP codes to get_bah to get rates for that "
             "area.",
+            DUTY_STATION_RULE,
             "Areas are named for localities, so an installation matches only "
             "where the published name includes it.",
         ],
@@ -563,6 +578,7 @@ def estimate_total_compensation(
             "gross_total": round((taxable + non_taxable) * 12, 2),
         },
         "complete": complete,
+        "bah_note": DUTY_STATION_RULE,
         "tax_note": (
             "Basic pay is taxable income. BAH and BAS are non-taxable "
             "allowances. This is regular military compensation only: it excludes "

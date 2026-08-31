@@ -158,7 +158,7 @@ def get_base_pay(
 
 @mcp.tool(annotations=_READ_ONLY)
 def get_bah(
-    zip_code: Annotated[str, Field(description="5-digit US ZIP code of the duty station.")],
+    zip_code: Annotated[str, Field(description="5-digit ZIP code of the member's PERMANENT DUTY STATION, not their home. BAH follows the duty station, so a residence ZIP returns a different, real, wrong housing area.")],
     pay_grade: Annotated[str, Field(description="Pay grade, e.g. 'E-5', 'O-3', 'O-2E'.")],
     has_dependents: Annotated[bool, Field(description="Whether the member has dependents.")],
     year: Annotated[int | None, Field(description="BAH year. Defaults to the most recent loaded.")] = None,
@@ -168,7 +168,12 @@ def get_bah(
 
     BAH is a non-taxable allowance. Resolves the ZIP to its Military Housing
     Area and returns the rate together with the MHA code, the rate set used and
-    its effective date. Where a housing area has an off-cycle adjustment, the
+    its effective date.
+
+    The ZIP must be the member's permanent duty station, not where they live.
+    Someone stationed at one installation but living in another housing area
+    still draws the duty station's rate, and a residence ZIP resolves to a
+    different real area and returns a plausible but wrong figure. Where a housing area has an off-cycle adjustment, the
     most recent applicable rate set is used.
     """
     return _run(queries.get_bah, zip_code, pay_grade, has_dependents, year, as_of=as_of)
@@ -181,6 +186,10 @@ def find_housing_area(
     limit: Annotated[int, Field(ge=1, le=100, description="Maximum areas to return.")] = 25,
 ) -> dict[str, Any]:
     """Find the Military Housing Area for a place, and ZIP codes to query it with.
+
+    Search for the duty station, not the member's home: BAH follows the
+    permanent duty station, so a residence in a different housing area does not
+    change the rate.
 
     Use this before get_bah whenever you have a place name rather than a ZIP
     code, instead of supplying a ZIP from memory: a wrong ZIP resolves to some
@@ -214,7 +223,7 @@ def get_bas(
 def estimate_total_compensation(
     pay_grade: Annotated[str, Field(description="Pay grade, e.g. 'E-5', 'O-3'.")],
     years_of_service: Annotated[float, Field(ge=0, description="Cumulative years of service.")],
-    zip_code: Annotated[str, Field(description="5-digit US ZIP code of the duty station.")],
+    zip_code: Annotated[str, Field(description="5-digit ZIP code of the member's PERMANENT DUTY STATION, not their home. BAH follows the duty station, so a residence ZIP returns a different, real, wrong housing area.")],
     has_dependents: Annotated[bool, Field(description="Whether the member has dependents.")],
     year: Annotated[int | None, Field(description="Year. Defaults to the most recent loaded.")] = None,
     months_active_duty: Annotated[int | None, Field(ge=0, description="Total months of active duty. Only affects E-1.")] = None,
@@ -223,7 +232,8 @@ def estimate_total_compensation(
     """Basic pay + BAH + BAS with a per-component breakdown and a tax split.
 
     Returns monthly and annual totals separated into taxable (basic pay) and
-    non-taxable (BAH, BAS) amounts. This is regular military compensation only:
+    non-taxable (BAH, BAS) amounts. The ZIP code must be the permanent duty
+    station, not the member's residence - BAH follows the duty station. This is regular military compensation only:
     it excludes special and incentive pays, bonuses, and all deductions.
     """
     return _run(

@@ -261,3 +261,25 @@ async def test_find_housing_area_reports_no_match_without_erroring(mcp_client):
             "find_housing_area", {"query": "Atlantis"}))
     assert result["count"] == 0
     assert "error" not in result
+
+
+@pytest.mark.anyio
+async def test_zip_parameter_says_duty_station_not_residence(mcp_client):
+    """The description is what stops a caller passing a home ZIP, so it has to
+    say so where the caller actually reads it."""
+    async with mcp_client as client:
+        tools = {t.name: t for t in await client.list_tools()}
+
+    for name in ("get_bah", "estimate_total_compensation"):
+        described = tools[name].inputSchema["properties"]["zip_code"]["description"]
+        assert "DUTY STATION" in described.upper()
+        assert "home" in described.lower() or "residence" in described.lower()
+
+
+@pytest.mark.anyio
+async def test_bah_response_carries_the_duty_station_rule(mcp_client):
+    async with mcp_client as client:
+        result = payload(await client.call_tool(
+            "get_bah",
+            {"zip_code": "92101", "pay_grade": "E-5", "has_dependents": True}))
+    assert any("permanent duty station" in note for note in result["notes"])

@@ -308,3 +308,41 @@ class TestFindHousingAreas:
         result = q.find_housing_areas(conn, ",", limit=1)
         assert len(result["housing_areas"]) <= 1
         assert result["truncated"] is True
+
+
+class TestDutyStationRule:
+    """BAH follows the permanent duty station, not the member's residence.
+
+    A real case: a member assigned to Travis AFB living in Winters, CA. The
+    home ZIP resolves to a Sacramento-area housing area and returns a lower
+    rate - real, plausible, and wrong. Nothing in the response said which ZIP
+    to use, so the mistake was invisible.
+    """
+
+    def test_every_bah_answer_carries_the_rule(self, conn):
+        notes = q.get_bah(conn, "92101", "E-5", True)["notes"]
+        assert any("permanent duty station" in note for note in notes)
+
+    def test_it_is_stated_before_rate_protection(self, conn):
+        """Which ZIP to ask about decides the answer; rate protection only
+        qualifies it."""
+        notes = q.get_bah(conn, "92101", "E-5", True)["notes"]
+        duty = next(i for i, n in enumerate(notes) if "duty station" in n)
+        protection = next(i for i, n in enumerate(notes) if "rate protection" in n)
+        assert duty < protection
+
+    def test_the_combined_estimate_carries_it_too(self, conn):
+        result = q.estimate_total_compensation(conn, "E-5", 4, "92101", True)
+        assert "permanent duty station" in result["bah_note"]
+
+    def test_the_area_search_carries_it(self, conn):
+        """The search is where a place name becomes a ZIP, so it is the last
+        point at which a home address can be caught."""
+        result = q.find_housing_areas(conn, "San Diego")
+        assert any("permanent duty station" in note for note in result["notes"])
+
+    def test_the_rule_names_the_exceptions_rather_than_overstating(self, conn):
+        from mcp_militarypay.queries import DUTY_STATION_RULE
+
+        assert "exceptions" in DUTY_STATION_RULE.lower()
+        assert "finance office" in DUTY_STATION_RULE.lower()

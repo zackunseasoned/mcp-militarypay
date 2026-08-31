@@ -261,6 +261,11 @@ on:
   is not on the officer grid at all.
 - **BAS II is never a default.** It's a conditional rate (2× standard enlisted
   BAS) requiring Service Secretary authorization; returned only when asked for.
+- **BAH follows the permanent duty station**, not the member's residence. A
+  member assigned to Travis AFB but living in Winters draws the Travis rate,
+  even though the home ZIP resolves to a Sacramento-area housing area and a
+  lower figure. Every BAH response says so, and the `zip_code` parameter
+  description says it where a caller reads it.
 - **BAH rate protection** is noted on every BAH response.
 - **Housing areas are looked up, not guessed.** BAH is published per Military
   Housing Area but `get_bah` takes a ZIP, so a caller with only a place name
