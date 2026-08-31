@@ -7,6 +7,7 @@ False: refreshing the data is a separate, deliberate step.
 
 from __future__ import annotations
 
+import atexit
 import os
 import sqlite3
 import threading
@@ -51,6 +52,13 @@ _READ_ONLY = {
 _local = threading.local()
 _db_path_override: Path | None = None
 
+# Every connection handed out, so they can be closed rather than left to the
+# garbage collector. An unclosed sqlite3 connection raises an unraisable
+# exception during finalization on Python 3.13+, and a worker thread that exits
+# would otherwise leak its connection for the life of the process.
+_connections: list[sqlite3.Connection] = []
+_connections_lock = threading.Lock()
+
 # Bumped on every configure(). A worker thread compares its cached connection
 # against this: clearing only the calling thread's connection left every other
 # thread serving the previous database indefinitely.
@@ -67,15 +75,27 @@ def configure(db_path: str | os.PathLike[str] | None) -> None:
     global _db_path_override, _config_generation
     _db_path_override = Path(db_path) if db_path is not None else None
     _config_generation += 1
-    _close_thread_connection()
+    _close_all_connections()
 
 
-def _close_thread_connection() -> None:
-    connection = getattr(_local, "connection", None)
-    if connection is not None:
-        connection.close()
+def _close_all_connections() -> None:
+    """Close every connection handed out, from whichever thread calls this.
+
+    Connections are opened with check_same_thread=False purely so this is
+    legal; each thread still gets its own, so none is ever shared in use.
+    """
+    with _connections_lock:
+        for connection in _connections:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+        _connections.clear()
     _local.connection = None
     _local.generation = None
+
+
+atexit.register(_close_all_connections)
 
 
 def current_db_path() -> Path:
@@ -87,10 +107,12 @@ def get_connection() -> sqlite3.Connection:
     """The calling thread's read-only connection, reopened after a configure()."""
     connection = getattr(_local, "connection", None)
     if connection is not None and getattr(_local, "generation", None) != _config_generation:
-        _close_thread_connection()
+        _close_all_connections()
         connection = None
     if connection is None:
-        connection = connect(_db_path_override, read_only=True)
+        connection = connect(_db_path_override, read_only=True, same_thread=False)
+        with _connections_lock:
+            _connections.append(connection)
         _local.connection = connection
         _local.generation = _config_generation
     return connection

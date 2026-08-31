@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from datetime import date
@@ -30,7 +31,8 @@ def _read(path: str | None) -> str | None:
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
-    conn = open_for_ingest(args.db)
+    conn = args.resources.enter_context(contextlib.closing(
+        open_for_ingest(args.db)))
     year = args.year or _current_year()
     results = []
 
@@ -96,7 +98,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     try:
-        conn = connect(args.db, read_only=True)
+        conn = args.resources.enter_context(
+            contextlib.closing(connect(args.db, read_only=True)))
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -208,7 +211,8 @@ STRUCTURAL_CHECKS = [
 def cmd_verify(args: argparse.Namespace) -> int:
     """Check the loaded data against independently known published figures."""
     try:
-        conn = connect(args.db, read_only=True)
+        conn = args.resources.enter_context(
+            contextlib.closing(connect(args.db, read_only=True)))
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -334,7 +338,8 @@ def cmd_notes(args: argparse.Namespace) -> int:
     actually captured so it can be checked against the live page.
     """
     try:
-        conn = connect(args.db, read_only=True)
+        conn = args.resources.enter_context(
+            contextlib.closing(connect(args.db, read_only=True)))
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -427,7 +432,8 @@ def cmd_lookup(args: argparse.Namespace) -> int:
     parallel one written for the CLI.
     """
     try:
-        conn = connect(args.db, read_only=True)
+        conn = args.resources.enter_context(
+            contextlib.closing(connect(args.db, read_only=True)))
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 1
@@ -566,7 +572,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    # Commands register their database connection here rather than each
+    # managing its own try/finally. An unclosed sqlite3 connection raises an
+    # unraisable exception during finalization on Python 3.13+, so leaving them
+    # to the garbage collector is not free.
+    with contextlib.ExitStack() as resources:
+        args.resources = resources
+        return args.func(args)
 
 
 if __name__ == "__main__":

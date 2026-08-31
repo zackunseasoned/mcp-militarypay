@@ -52,11 +52,21 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def connect(db_path: str | os.PathLike[str] | None = None, *, read_only: bool = False) -> sqlite3.Connection:
+def connect(
+    db_path: str | os.PathLike[str] | None = None,
+    *,
+    read_only: bool = False,
+    same_thread: bool = True,
+) -> sqlite3.Connection:
     """Open the rate database.
 
     With read_only=True the connection is opened via a file: URI in ro mode, so
     a serving process physically cannot write. Raises if the file is missing.
+
+    same_thread=False disables sqlite3's thread-affinity check. The server uses
+    it so a connection can be closed from a thread other than the one that
+    opened it; each thread still gets its own, so none is used from two threads
+    at once.
     """
     path = Path(db_path) if db_path is not None else default_db_path()
 
@@ -68,10 +78,13 @@ def connect(db_path: str | os.PathLike[str] | None = None, *, read_only: bool = 
             )
         # A path containing '#' or '?' would otherwise be read as a URI
         # fragment or query, silently opening a different (empty) database.
-        conn = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True)
+        conn = sqlite3.connect(
+            f"file:{quote(str(path))}?mode=ro", uri=True,
+            check_same_thread=same_thread,
+        )
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(path, check_same_thread=same_thread)
         conn.execute("PRAGMA foreign_keys = ON")
 
     conn.row_factory = sqlite3.Row
