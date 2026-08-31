@@ -45,6 +45,7 @@ def ingest_base_pay(
     html: str | None = None,
     year: int | None = None,
     refresh: bool = False,
+    allow_year_mismatch: bool = False,
 ) -> IngestResult:
     """Ingest one DFAS basic pay category page.
 
@@ -62,6 +63,21 @@ def ingest_base_pay(
                   notes=str(exc), fetched_at=fetched_at)
         conn.commit()
         return IngestResult(f"base_pay:{category}", ok=False, error=str(exc))
+
+    if year is not None and table.year is not None and year != table.year:
+        # Storing one year's rates under another is exactly the silent staleness
+        # this project exists to avoid, so it fails rather than warns.
+        message = (
+            f"the page is stamped 'Effective January 1, {table.year}' but "
+            f"--year {year} was requested. Refusing to file {table.year} rates "
+            f"as {year}. Omit --year to use the page's own year, or pass "
+            f"--allow-year-mismatch if this is deliberate."
+        )
+        if not allow_year_mismatch:
+            log_fetch(conn, source=f"base_pay:{category}", url=url, ok=False,
+                      notes=message, fetched_at=fetched_at)
+            conn.commit()
+            return IngestResult(f"base_pay:{category}", ok=False, error=message)
 
     effective_year = year or table.year
     if effective_year is None:
@@ -104,6 +120,11 @@ def ingest_base_pay(
     )
 
     warnings = list(table.warnings)
+    if year is not None and table.year is not None and year != table.year:
+        warnings.append(
+            f"page is stamped {table.year} but stored as {year} "
+            f"(--allow-year-mismatch)"
+        )
     for key, special in table.specials.items():
         if (special["monthly_rate"] is None
                 and key not in sources.INFORMATIONAL_SPECIAL_KEYS):

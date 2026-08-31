@@ -66,9 +66,13 @@ class TestLookup:
         assert run(db_path, "lookup", "--grade", "E-5", "--zip", "99999") == 1
         assert "crosswalk" in capsys.readouterr().err
 
+    def test_bas_alone_is_a_valid_lookup(self, db_path, capsys):
+        assert run(db_path, "lookup", "--bas", "enlisted") == 0
+        assert "476.95" in capsys.readouterr().out
+
     def test_requires_something_to_look_up(self, db_path, capsys):
         assert run(db_path, "lookup") == 2
-        assert "at least --grade" in capsys.readouterr().err
+        assert "--bas officer|enlisted" in capsys.readouterr().err
 
 
 class TestNotes:
@@ -77,3 +81,21 @@ class TestNotes:
         out = capsys.readouterr().out
         assert "senior_enlisted_advisor" in out
         assert "11166.9" in out
+
+
+class TestDatabasePathHandling:
+    def test_a_path_containing_a_uri_metacharacter_still_opens(self, tmp_path):
+        """An unencoded file: URI reads '#' as a fragment and silently opens a
+        different, empty database."""
+        from mcp_militarypay import db, ingest
+        from tests.conftest import FIXTURES
+
+        awkward = tmp_path / "rates #1 (2026).sqlite3"
+        conn = db.open_for_ingest(awkward)
+        ingest.ingest_bas(conn, html=(FIXTURES / "dfas_bas.html").read_text())
+        conn.commit()
+        conn.close()
+
+        readonly = db.connect(awkward, read_only=True)
+        assert readonly.execute("SELECT COUNT(*) FROM bas_rates").fetchone()[0] == 3
+        readonly.close()

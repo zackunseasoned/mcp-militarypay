@@ -47,6 +47,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             results.append(ingest_module.ingest_base_pay(
                 conn, category, html=_read(args.from_file) if len(categories) == 1 else None,
                 year=args.year, refresh=args.refresh,
+                allow_year_mismatch=args.allow_year_mismatch,
             ))
 
     if want_all or args.bas:
@@ -417,8 +418,9 @@ def cmd_lookup(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    if not any([args.zip, args.years is not None, args.grade]):
-        print("give at least --grade with --years and/or --zip", file=sys.stderr)
+    if not any([args.zip, args.years is not None, args.grade, args.bas]):
+        print("give --grade with --years and/or --zip, or --bas officer|enlisted",
+              file=sys.stderr)
         return 2
 
     try:
@@ -484,6 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--url", help="Override the source URL.")
     p_ingest.add_argument("--from-file", help="Load from a local file instead of the network.")
     p_ingest.add_argument("--refresh", action="store_true", help="Bypass the HTTP cache.")
+    p_ingest.add_argument("--allow-year-mismatch", action="store_true",
+                          help="Store a page under --year even though the page "
+                               "is stamped with a different effective year.")
     p_ingest.set_defaults(func=cmd_ingest)
 
     p_status = sub.add_parser("status", help="Show what data is loaded.")

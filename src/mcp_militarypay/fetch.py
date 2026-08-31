@@ -73,7 +73,11 @@ def default_headers() -> dict[str, str]:
 
 
 def cache_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "data" / "cache"
+    """Alongside the database, so a non-editable install does not try to write
+    into the Python library tree."""
+    from .db import data_dir
+
+    return data_dir() / "cache"
 
 
 def _cache_path(url: str, suffix: str) -> Path:

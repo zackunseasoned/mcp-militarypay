@@ -55,8 +55,13 @@ class TestReplaceSemantics:
 
     def test_prior_years_survive_a_refresh(self, blank, enlisted_html):
         """Historical rates stay queryable: BAH rate protection and back-pay
-        questions both need them."""
-        ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html, year=2025)
+        questions both need them.
+
+        The 2026-stamped fixture is filed as 2025 only with an explicit
+        override, which is what that flag is for.
+        """
+        ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html, year=2025,
+                               allow_year_mismatch=True)
         ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html, year=2026)
         years = {r[0] for r in blank.execute("SELECT DISTINCT year FROM base_pay")}
         assert years == {2025, 2026}
@@ -159,3 +164,34 @@ class TestCrossCategorySpecials:
             "WHERE year = 2026 AND key = 'senior_enlisted_advisor'"
         ).fetchone()["monthly_rate"]
         assert rate == 11166.90
+
+
+class TestYearMismatch:
+    """Filing one year's rates under another is exactly the silent staleness
+    this project exists to avoid, so it fails rather than warns."""
+
+    def test_year_conflicting_with_the_page_is_refused(self, blank, enlisted_html):
+        result = ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html,
+                                        year=2025)
+        assert result.ok is False
+        assert "Effective January 1, 2026" in result.error
+        assert count(blank, "base_pay") == 0
+
+    def test_the_refusal_is_logged(self, blank, enlisted_html):
+        ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html, year=2025)
+        row = blank.execute(
+            "SELECT ok, notes FROM source_fetch_log WHERE source = ?",
+            ("base_pay:enlisted",),
+        ).fetchone()
+        assert row["ok"] == 0
+        assert "--year 2025" in row["notes"]
+
+    def test_override_stores_it_and_records_why(self, blank, enlisted_html):
+        result = ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html,
+                                        year=2025, allow_year_mismatch=True)
+        assert result.ok is True
+        assert any("stamped 2026 but stored as 2025" in w for w in result.warnings)
+
+    def test_matching_year_is_untouched(self, blank, enlisted_html):
+        assert ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html,
+                                      year=2026).ok is True

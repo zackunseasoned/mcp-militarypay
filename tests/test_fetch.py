@@ -5,6 +5,8 @@ original custom User-Agent with HTTP 403 on every URL across both hosts. These
 tests pin the browser-header default and the diagnostics that led to it.
 """
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -165,3 +167,27 @@ class TestProbe:
         result = fetch.probe_url("https://example.test/a", "browser")
         assert result["status"] is None
         assert "ConnectError" in result["error"]
+
+
+class TestInstallSafePaths:
+    """parents[2] is the repo root from a checkout but the parent of
+    site-packages from a normal pip install, where writing would land in the
+    Python library tree."""
+
+    def test_cache_lives_under_the_data_dir(self):
+        from mcp_militarypay.db import data_dir
+
+        assert fetch.cache_dir() == data_dir() / "cache"
+
+    def test_source_checkout_is_detected_by_its_pyproject(self):
+        from mcp_militarypay.db import project_root
+
+        root = project_root()
+        assert root is not None
+        assert (root / "pyproject.toml").is_file()
+
+    def test_falls_back_to_home_when_not_a_checkout(self, monkeypatch):
+        from mcp_militarypay import db as db_module
+
+        monkeypatch.setattr(db_module, "project_root", lambda: None)
+        assert db_module.data_dir() == Path.home() / ".mcp-militarypay"

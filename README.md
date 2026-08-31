@@ -56,8 +56,14 @@ rates read out of it, flagging any rate that could not be extracted. Those
 patterns are the most fragile part of the ingest, so this is the quickest way
 to check them against the live page.
 
-The database defaults to `data/militarypay.sqlite3`; override with `--db` or the
-`MILITARYPAY_DB` environment variable.
+The database defaults to `data/militarypay.sqlite3` inside the checkout, or
+`~/.mcp-militarypay/` when installed as a normal (non-editable) package.
+Override with `--db` or the `MILITARYPAY_DB` environment variable.
+
+An explicit `--year` that disagrees with the page's own "Effective January 1,
+YYYY" stamp is **refused** rather than stored, since filing one year's rates
+under another is precisely the silent staleness this is meant to avoid. Pass
+`--allow-year-mismatch` when that is deliberate.
 
 ### Off-cycle BAH rate sets
 
@@ -251,7 +257,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-192 tests, no network required — the parsers run against fixtures in
+221 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

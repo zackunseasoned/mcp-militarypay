@@ -6,6 +6,7 @@ import pytest
 from fastmcp import Client
 
 from mcp_militarypay import server
+from tests.conftest import FIXTURES
 
 
 @pytest.fixture
@@ -150,3 +151,33 @@ async def test_database_status(mcp_client):
     data = payload(result)
     assert data["base_pay_years"] == [2026]
     assert data["database_path"]
+
+
+@pytest.mark.anyio
+async def test_reconfigure_takes_effect_on_worker_threads(db_path, tmp_path):
+    """FastMCP dispatches tools on worker threads. Clearing only the calling
+    thread's connection left every other thread serving the old database."""
+    from mcp_militarypay import db as db_module
+    from mcp_militarypay import ingest
+
+    other = tmp_path / "other.sqlite3"
+    conn = db_module.open_for_ingest(other)
+    ingest.ingest_bas(conn, html=(FIXTURES / "dfas_bas.html").read_text())
+    conn.commit()
+    conn.close()
+
+    server.configure(db_path)
+    try:
+        async with Client(server.mcp) as client:
+            first = payload(await client.call_tool("get_database_status", {}))
+        assert first["base_pay_years"] == [2026]
+        assert str(db_path) in first["database_path"]
+
+        server.configure(other)
+        async with Client(server.mcp) as client:
+            second = payload(await client.call_tool("get_database_status", {}))
+        # The other database has BAS only, so this proves the switch landed.
+        assert second["base_pay_years"] == []
+        assert str(other) in second["database_path"]
+    finally:
+        server.configure(None)

@@ -103,6 +103,16 @@ def get_base_pay(
     }
 
     # Flat rates that override the years-of-service grid entirely.
+    if senior_enlisted_advisor and grade != "E-9":
+        # DFAS publishes this as the rate for "senior enlisted member (grade
+        # E-9)". Applying it to any other grade would return an E-9 figure
+        # under someone else's pay grade.
+        result["warning"] = (
+            f"senior_enlisted_advisor applies only to E-9; ignoring it for "
+            f"{grade} and using the published table rate"
+        )
+        senior_enlisted_advisor = False
+
     if senior_enlisted_advisor:
         special = conn.execute(
             "SELECT * FROM base_pay_special WHERE year = ? AND key = ?",
@@ -415,6 +425,16 @@ def estimate_total_compensation(
     base_rate = (components.get("base_pay") or {}).get("monthly_rate")
     bah_rate = (components.get("bah") or {}).get("monthly_rate")
     bas_rate = (components.get("bas") or {}).get("monthly_rate")
+
+    # A grade/YOS combination that does not exist resolves without raising but
+    # carries a null rate. Left alone it would drop out of the totals silently,
+    # so gross_total would read as BAH + BAS and look like a real answer.
+    base_component = components.get("base_pay") or {}
+    if base_rate is None and base_component.get("rate_basis") == "not_a_valid_combination":
+        errors["base_pay"] = base_component.get("explanation") or (
+            f"{grade} at {years_of_service} years of service is not a published "
+            f"combination"
+        )
 
     taxable = base_rate or 0.0
     non_taxable = (bah_rate or 0.0) + (bas_rate or 0.0)

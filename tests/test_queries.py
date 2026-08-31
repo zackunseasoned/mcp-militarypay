@@ -221,3 +221,37 @@ class TestStatus:
         assert status["bas_rows"] == 3
         assert {s["id"] for s in status["bah_rate_sets"]} == {"2026", "2026-abilene-temp"}
         assert status["recent_fetches"]
+
+
+class TestSeniorEnlistedAdvisorGating:
+    """DFAS publishes this as the rate for "senior enlisted member (grade
+    E-9)". Ungated, it returned an E-9 figure under any pay grade asked for."""
+
+    def test_applies_to_e9(self, conn):
+        result = q.get_base_pay(conn, "E-9", 20, senior_enlisted_advisor=True)
+        assert result["monthly_rate"] == 11166.90
+        assert result["rate_basis"] == "senior_enlisted_advisor_flat_rate"
+
+    @pytest.mark.parametrize("grade", ["E-1", "E-5", "E-8"])
+    def test_ignored_for_any_other_grade(self, conn, grade):
+        result = q.get_base_pay(conn, grade, 20, senior_enlisted_advisor=True)
+        assert result["rate_basis"] != "senior_enlisted_advisor_flat_rate"
+        assert result["monthly_rate"] != 11166.90
+        assert "applies only to E-9" in result["warning"]
+
+
+class TestInvalidCombinationInTotals:
+    """A null base pay rate would otherwise drop out of the sum, leaving
+    gross_total reading as BAH + BAS and looking like a real answer."""
+
+    def test_invalid_combination_is_reported_not_dropped(self, conn):
+        result = q.estimate_total_compensation(conn, "E-8", 2, "92101", True)
+        assert result["complete"] is False
+        assert "base_pay" in result["errors"]
+        assert "not that the rate is zero" in result["errors"]["base_pay"]
+        assert result["warning"]
+
+    def test_a_valid_combination_still_completes(self, conn):
+        result = q.estimate_total_compensation(conn, "E-5", 4, "92101", True)
+        assert result["complete"] is True
+        assert "errors" not in result

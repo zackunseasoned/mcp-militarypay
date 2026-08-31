@@ -22,14 +22,22 @@ from ..sources import EXPECTED_GRADES, YOS_COLUMN_LABELS
 # 'E-9 (Notes 2 & 3)' -> E-9 ; 'O1E' -> O-1E ; 'W-5' -> W-5
 _GRADE_RE = re.compile(r"^\s*\**\s*([EWO])\s*-?\s*(\d{1,2})\s*(E)?\b", re.IGNORECASE)
 
+_EMPTY_CELL_TOKENS = {"", "-", "--", "---", "n/a", "na", "—", "–"}
+
 # '3,946.80' / '$3,946.80' / '11166.90'
-_MONEY_RE = re.compile(r"\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+\.\d{1,2})")
+#
+# The comma-grouped branch requires at least one group, and the plain branch
+# takes every digit. An earlier version made the group and the decimals both
+# optional, so "11166.90" matched its first three characters and parsed as
+# 111.0 - a silently wrong rate. Every DFAS figure is comma-formatted today,
+# which is the only reason that never surfaced. The trailing (?!\d) stops a
+# partial match when more digits follow.
+_AMOUNT = r"\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?"
+_MONEY_RE = re.compile(rf"\$?\s*({_AMOUNT})(?!\d)")
 
 _EFFECTIVE_RE = re.compile(
     r"effective\s+(?:january\s+1,?\s*)?(\d{4})", re.IGNORECASE
 )
-
-_EMPTY_CELL_TOKENS = {"", "-", "--", "---", "n/a", "na", "—", "–"}
 
 _NOTE_KEYWORDS = (
     "note", "basic pay", "less than", "senior enlisted", "advisor",
@@ -64,9 +72,7 @@ _NOTE_SPLIT_RE = re.compile(r"(?<![\d.,$])(?=\b\d{1,2}\.\s+[A-Z])")
 # note text is full of ordinals ('Note 2.', 'level II') that a loose number
 # match would happily mistake for a pay rate. Requires either an explicit $ or
 # a comma-grouped figure with cents.
-_NOTE_DOLLAR_RE = re.compile(
-    r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+\.\d{2})"
-)
+_NOTE_DOLLAR_RE = re.compile(rf"\$\s*({_AMOUNT})(?!\d)")
 _NOTE_GROUPED_RE = re.compile(r"\b(\d{1,3}(?:,\d{3})+\.\d{2})\b")
 _NOTE_PREFIX_RE = re.compile(r"^\s*note\s*\d+\s*[.:)]?\s*", re.IGNORECASE)
 
@@ -76,8 +82,7 @@ _NOTE_PREFIX_RE = re.compile(r"^\s*note\s*\d+\s*[.:)]?\s*", re.IGNORECASE)
 # merely mentions senior enlisted members and happens to contain "($225)".
 # [^.$] stops the match running across a sentence boundary or a different sum.
 _BASIC_PAY_IS_RE = re.compile(
-    r"basic\s+pay\b[^.$]{0,140}?\bis\b[^.$]{0,40}?"
-    r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+\.\d{2})",
+    rf"basic\s+pay\b[^.$]{{0,140}}?\bis\b[^.$]{{0,40}}?\$\s*({_AMOUNT})(?!\d)",
     re.IGNORECASE,
 )
 

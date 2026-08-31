@@ -51,27 +51,48 @@ _READ_ONLY = {
 _local = threading.local()
 _db_path_override: Path | None = None
 
+# Bumped on every configure(). A worker thread compares its cached connection
+# against this: clearing only the calling thread's connection left every other
+# thread serving the previous database indefinitely.
+_config_generation = 0
+
 
 def configure(db_path: str | os.PathLike[str] | None) -> None:
     """Point the server at a specific database file.
 
-    Also clears this thread's cached connection so the change takes effect
-    immediately. Without a call to this, the path comes from $MILITARYPAY_DB or
-    the packaged default.
+    Takes effect on every thread, not just the caller's: each worker reopens
+    when it next sees a newer configuration. Without a call to this, the path
+    comes from $MILITARYPAY_DB or the packaged default.
     """
-    global _db_path_override
+    global _db_path_override, _config_generation
     _db_path_override = Path(db_path) if db_path is not None else None
-    if getattr(_local, "connection", None) is not None:
-        _local.connection.close()
-        _local.connection = None
+    _config_generation += 1
+    _close_thread_connection()
+
+
+def _close_thread_connection() -> None:
+    connection = getattr(_local, "connection", None)
+    if connection is not None:
+        connection.close()
+    _local.connection = None
+    _local.generation = None
+
+
+def current_db_path() -> Path:
+    """The database this server is actually reading."""
+    return _db_path_override if _db_path_override is not None else default_db_path()
 
 
 def get_connection() -> sqlite3.Connection:
-    """The calling thread's read-only connection, opened on first use."""
+    """The calling thread's read-only connection, reopened after a configure()."""
     connection = getattr(_local, "connection", None)
+    if connection is not None and getattr(_local, "generation", None) != _config_generation:
+        _close_thread_connection()
+        connection = None
     if connection is None:
         connection = connect(_db_path_override, read_only=True)
         _local.connection = connection
+        _local.generation = _config_generation
     return connection
 
 
@@ -178,7 +199,7 @@ def get_database_status() -> dict[str, Any]:
     find out why a lookup came back empty.
     """
     result = _run(queries.database_status)
-    result.setdefault("database_path", str(default_db_path()))
+    result.setdefault("database_path", str(current_db_path()))
     return result
 
 

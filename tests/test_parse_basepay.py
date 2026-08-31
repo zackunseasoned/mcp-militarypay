@@ -216,3 +216,41 @@ def test_table_row_labels_are_not_footnotes():
     assert _is_noise("O-1 (Notes 5, 6 & 7)")
     assert _is_noise("E-9 (Note 2)")
     assert not _is_noise("1. Basic pay for an E-1 ... is $2,225.70.")
+
+
+class TestAmountsWithoutThousandsSeparators:
+    """Every DFAS figure is comma-formatted today, which is the only reason
+    this went unnoticed: the pattern let the comma group and the decimals both
+    be optional, so "11166.90" matched its first three characters and parsed as
+    111.0 - a silently wrong entitlement rate."""
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("3,946.80", 3946.80), ("3946.80", 3946.80), ("$3946.80", 3946.80),
+            ("11,166.90", 11166.90), ("11166.90", 11166.90),
+            ("1452.90", 1452.90), ("476.95", 476.95),
+            ("1,234,567.89", 1234567.89), ("2225.70", 2225.70),
+        ],
+    )
+    def test_parse_money_takes_the_whole_number(self, text, expected):
+        assert parse_money(text) == expected
+
+    def test_stated_pay_rate_without_a_comma(self):
+        from mcp_militarypay.parsers.basepay import extract_stated_pay_rate
+
+        assert extract_stated_pay_rate(
+            "Basic pay for senior enlisted member (grade E-9) is $11166.90 "
+            "regardless of years of service"
+        ) == 11166.90
+
+    def test_note_amount_without_a_comma(self):
+        assert extract_note_amount("E-1 rate is $2225.70.") == 2225.70
+
+    def test_a_table_of_uncommatted_cells_parses_correctly(self):
+        html = """<html><body><p>Effective January 1, 2026</p><table>
+        <tr><th>Pay Grade</th><th>2 or less</th><th>Over 4</th></tr>
+        <tr><td>E-5</td><td>3255.30</td><td>3946.80</td></tr></table></body></html>"""
+        table = parse_base_pay(html, "enlisted")
+        assert table.rates[("E-5", 0)] == 3255.30
+        assert table.rates[("E-5", 4)] == 3946.80
