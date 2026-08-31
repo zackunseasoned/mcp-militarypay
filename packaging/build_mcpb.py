@@ -14,6 +14,13 @@ Windows wheels:
 
 Output: dist/militarypay-<version>.mcpb
 
+The manifest pins an absolute interpreter path by default. A host may launch
+`python3` rather than the `python` a manifest asks for, and on a machine with
+several Pythons that can be a different version than the one whose ABI the
+vendored wheels were built against - pydantic_core then fails to import its
+compiled extension, or `python3` is not resolvable at all. Pinning removes the
+guess. Use --command to override.
+
 Only the server's own dependency (fastmcp) is vendored. The ingest needs
 httpx, beautifulsoup4, lxml and openpyxl, but a bundle serves rates from an
 already-built database and never fetches, so those would be dead weight.
@@ -23,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +42,9 @@ SRC = ROOT / "src" / "mcp_militarypay"
 
 # Vendored into lib/. Deliberately not the ingest-only dependencies.
 SERVER_REQUIREMENTS = ["fastmcp>=2.0"]
+
+# What --command accepts for a host-resolved (portable, fragile) bundle.
+PORTABLE_COMMAND = "python"
 
 ENTRY_POINT = '''"""Bundle entry point: run the militarypay MCP server over stdio."""
 
@@ -51,6 +62,26 @@ if __name__ == "__main__":
 '''
 
 
+def base_interpreter() -> Path:
+    """The interpreter the vendored wheels are ABI-compatible with.
+
+    sys.executable inside a virtualenv points at the venv, which ties the
+    bundle to a checkout that may move. sys.base_prefix is the installation the
+    venv was created from: same ABI, stable location.
+    """
+    base = Path(sys.base_prefix)
+    candidates = (
+        [base / "python.exe", base / "Scripts" / "python.exe"]
+        if sys.platform == "win32"
+        else [base / "bin" / f"python{sys.version_info.major}.{sys.version_info.minor}",
+              base / "bin" / "python3", base / "bin" / "python"]
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return Path(sys.executable)
+
+
 def read_version() -> str:
     text = (SRC / "__init__.py").read_text(encoding="utf-8")
     for line in text.splitlines():
@@ -59,7 +90,7 @@ def read_version() -> str:
     raise SystemExit("could not read __version__")
 
 
-def build_manifest(version: str) -> dict:
+def build_manifest(version: str, command: str) -> dict:
     return {
         "manifest_version": "0.3",
         "name": "militarypay",
@@ -90,7 +121,7 @@ def build_manifest(version: str) -> dict:
             "type": "python",
             "entry_point": "server/main.py",
             "mcp_config": {
-                "command": "python",
+                "command": command,
                 "args": ["${__dirname}/server/main.py"],
                 "env": {
                     "PYTHONPATH": "${__dirname}/lib",
@@ -150,11 +181,17 @@ def vendor_dependencies(lib: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", default=str(ROOT / "dist"))
+    parser.add_argument(
+        "--command", default=None,
+        help="Interpreter the manifest tells the host to run. Defaults to an "
+             "absolute path to the interpreter whose ABI the vendored wheels "
+             "match. Pass 'python' for a portable-but-fragile bundle.")
     parser.add_argument("--keep-staging", action="store_true",
                         help="Leave the unzipped staging directory in place.")
     args = parser.parse_args()
 
     version = read_version()
+    command = args.command or str(base_interpreter())
     out_dir = Path(args.out_dir)
     staging = out_dir / "mcpb-staging"
     bundle = out_dir / f"militarypay-{version}.mcpb"
@@ -166,13 +203,33 @@ def main() -> int:
     lib.mkdir()
 
     (staging / "manifest.json").write_text(
-        json.dumps(build_manifest(version), indent=2) + "\n", encoding="utf-8")
+        json.dumps(build_manifest(version, command), indent=2) + "\n",
+        encoding="utf-8")
     (staging / "server" / "main.py").write_text(ENTRY_POINT, encoding="utf-8")
     (staging / "requirements.txt").write_text(
         "\n".join(SERVER_REQUIREMENTS) + "\n", encoding="utf-8")
 
     print(f"vendoring dependencies with {sys.executable} ...")
     vendor_dependencies(lib)
+
+    # Verify before packing, and before the staging tree is removed: this is
+    # the check that would have caught the wheels being built for one Python
+    # and the manifest naming another.
+    if command not in ("python", "python3"):
+        check = subprocess.run(
+            [command, "-c", "import pydantic_core._pydantic_core"],
+            env={**os.environ, "PYTHONPATH": str(lib)},
+            capture_output=True, text=True,
+        )
+        if check.returncode != 0:
+            print(
+                f"\nERROR: {command} cannot import the vendored wheels.\n"
+                f"They were built by {sys.executable}, whose ABI it does not "
+                f"share.\n{check.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"verified: {command} loads the vendored wheels")
 
     if bundle.exists():
         bundle.unlink()
@@ -186,6 +243,7 @@ def main() -> int:
 
     size_mb = bundle.stat().st_size / (1024 * 1024)
     print(f"\nbuilt {bundle}  ({size_mb:.1f} MB)")
+    print(f"manifest command: {command}")
     print("Install it in Claude: Settings -> Extensions -> Install Extension, "
           "or open the file directly.")
     return 0

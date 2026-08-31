@@ -35,7 +35,14 @@ def builder():
 
 @pytest.fixture(scope="module")
 def manifest(builder):
-    return builder.build_manifest(builder.read_version())
+    return builder.build_manifest(builder.read_version(), builder.PORTABLE_COMMAND)
+
+
+@pytest.fixture(scope="module")
+def pinned_manifest(builder):
+    return builder.build_manifest(
+        builder.read_version(), str(builder.base_interpreter())
+    )
 
 
 def test_version_matches_the_package(builder):
@@ -62,7 +69,6 @@ def test_server_block_is_a_python_bundle(manifest):
     assert server["type"] == "python"
     assert server["entry_point"] == "server/main.py"
     config = server["mcp_config"]
-    assert config["command"] == "python"
     assert config["args"] == ["${__dirname}/server/main.py"]
 
 
@@ -111,3 +117,42 @@ def test_disclaimer_is_carried_into_the_listing(manifest):
     text = manifest["long_description"].lower()
     assert "unofficial" in text
     assert "dfas" in text
+
+
+class TestPinnedInterpreter:
+    """A host may launch `python3` rather than the `python` a manifest asks
+    for. On a machine with several Pythons that can be a different version than
+    the vendored wheels were built for, and pydantic_core then fails to import
+    its compiled extension - or `python3` is not on PATH at all. The default
+    bundle names an interpreter outright."""
+
+    def test_default_command_is_an_absolute_path(self, pinned_manifest):
+        command = pinned_manifest["server"]["mcp_config"]["command"]
+        assert Path(command).is_absolute()
+
+    def test_the_pinned_interpreter_exists(self, builder):
+        assert builder.base_interpreter().is_file()
+
+    def test_it_is_not_the_virtualenv(self, builder):
+        """A venv path would tie the bundle to a checkout that can move."""
+        import sys
+
+        pinned = builder.base_interpreter().resolve()
+        assert sys.base_prefix in (str(pinned), *(str(p) for p in pinned.parents))
+
+    def test_the_pinned_interpreter_can_load_the_vendored_abi(self, builder):
+        """Same ABI as the interpreter that vendors the wheels, which is the
+        whole point of pinning to base_prefix rather than to anything else."""
+        import subprocess
+        import sys
+
+        pinned = builder.base_interpreter()
+        result = subprocess.run(
+            [str(pinned), "-c",
+             "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            capture_output=True, text=True, check=True,
+        )
+        assert result.stdout.strip() == f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    def test_portable_command_is_still_available(self, manifest, builder):
+        assert manifest["server"]["mcp_config"]["command"] == builder.PORTABLE_COMMAND

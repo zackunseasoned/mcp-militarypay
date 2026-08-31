@@ -184,6 +184,16 @@ wheels. The bundle carries only what the *server* needs — it serves from an
 already-built database and never fetches, so the ingest's dependencies are left
 out. It needs no virtualenv at run time.
 
+**The manifest pins an absolute interpreter path.** A host may launch `python3`
+rather than the `python` a manifest asks for, and on a machine with several
+Pythons installed that can be a different version than the vendored wheels were
+built against — `pydantic_core` then fails to import its compiled extension, or
+`python3` isn't on `PATH` at all and the spawn fails outright. The build pins
+the interpreter matching the vendored ABI (`sys.base_prefix`, not the
+virtualenv, so the bundle doesn't depend on the checkout staying put) and
+**refuses to pack if that interpreter can't import them**. `--command python`
+restores host resolution if you want a portable bundle and accept the risk.
+
 ### Registering by hand
 
 Register it with an MCP client (stdio transport):
@@ -342,7 +352,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-267 tests, no network required — the parsers run against fixtures in
+272 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:
