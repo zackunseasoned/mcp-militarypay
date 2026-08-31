@@ -232,8 +232,13 @@ def cmd_notes(args: argparse.Namespace) -> int:
     missing = 0
     for row in specials:
         rate = row["monthly_rate"]
-        marker = "[ ok ]" if rate is not None else "[MISSING RATE]"
-        if rate is None:
+        informational = row["key"] in sources.INFORMATIONAL_SPECIAL_KEYS
+        if rate is not None:
+            marker = "[ ok ]"
+        elif informational:
+            marker = "[ info]"   # points at another schedule, states no rate
+        else:
+            marker = "[MISSING RATE]"
             missing += 1
         print(f"  {marker} {row['key']}")
         print(f"          rate:  {rate}")

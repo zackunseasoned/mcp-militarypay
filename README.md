@@ -165,6 +165,8 @@ on:
   "not a valid combination" explanation.
 - **Years-of-service banding** is a range lookup, not a column-label match: 5
   years of service is paid at the "Over 4" band.
+- **Service academy cadets / midshipmen and ROTC members** are a flat rate that
+  is not on the officer grid at all.
 - **BAS II is never a default.** It's a conditional rate (2× standard enlisted
   BAS) requiring Service Secretary authorization; returned only when asked for.
 - **BAH rate protection** is noted on every BAH response.
@@ -237,7 +239,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-166 tests, no network required — the parsers run against fixtures in
+172 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

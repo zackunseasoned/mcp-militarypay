@@ -31,6 +31,30 @@ _EFFECTIVE_RE = re.compile(
 
 _EMPTY_CELL_TOKENS = {"", "-", "--", "---", "n/a", "na", "—", "–"}
 
+_NOTE_KEYWORDS = (
+    "note", "basic pay", "less than", "senior enlisted", "advisor",
+    "executive schedule", "limited to", "cadet", "midshipm", "rotc",
+    "rate for", "pay rate",
+)
+
+# Site furniture that sits in prose-like elements and survives a keyword filter:
+# breadcrumb navigation, and the table's own column-group header (which contains
+# the word "Note" because it points at the footnotes).
+_NOISE_RE = re.compile(
+    r"payentitlements"
+    r"|pay\s+tables\s+basic\s+pay"
+    r"|home\s+militarymembers"
+    r"|^cumulative\s+years\s+of\s+service"
+    r"|^effective\s+\w+\s+\d",
+    re.IGNORECASE,
+)
+
+_NOTES_LABEL_RE = re.compile(r"^\s*notes?\s*:?\s*", re.IGNORECASE)
+
+# Split before "1. ", "2. " etc. The lookbehind stops "$1,452.90. " being read
+# as a note number.
+_NOTE_SPLIT_RE = re.compile(r"(?<![\d.,$])(?=\b\d{1,2}\.\s+[A-Z])")
+
 # Dollar amounts inside footnote prose. Deliberately stricter than _MONEY_RE:
 # note text is full of ordinals ('Note 2.', 'level II') that a loose number
 # match would happily mistake for a pay rate. Requires either an explicit $ or
@@ -168,31 +192,59 @@ def _parse_one_table(table) -> tuple[dict[str, int], dict[tuple[str, int], float
     return {str(v): k for k, v in columns.items()}, values
 
 
+def _split_numbered_notes(text: str) -> list[str]:
+    """Split a "NOTES: 1. ... 2. ..." block into individual notes.
+
+    The lookbehind keeps dollar amounts intact: in "...is $1,452.90. 2. Next",
+    the "90." must not be mistaken for a note number.
+    """
+    body = _NOTES_LABEL_RE.sub("", text).strip()
+    parts = [p.strip() for p in _NOTE_SPLIT_RE.split(body) if p.strip()]
+    return parts if len(parts) > 1 else ([body] if body else [])
+
+
+def _is_noise(text: str) -> bool:
+    """Reject site furniture that surrounds the real footnotes.
+
+    The DFAS pages put breadcrumb navigation and the table's own column-group
+    header in elements that otherwise look like prose, and both contain the word
+    "Note", so a keyword filter alone lets them through.
+    """
+    return bool(_NOISE_RE.search(text))
+
+
 def _extract_notes(soup: BeautifulSoup) -> list[str]:
-    """Collect footnote-ish text from the page.
+    """Collect footnote text from the page.
 
     These footnotes are real entitlement logic (the E-1 under-4-months rate, the
-    senior enlisted advisor flat rate), not trivia, so they are kept verbatim.
+    senior enlisted advisor flat rate, the cadet/ROTC rate), not trivia, so they
+    are kept verbatim. A whole "NOTES:" block is captured and then split into
+    individual notes: the block on some pages runs to a few thousand characters,
+    which an earlier length cap silently discarded.
     """
     notes: list[str] = []
     seen: set[str] = set()
-    keywords = (
-        "note", "basic pay", "less than", "senior enlisted", "advisor",
-        "limited", "level", "effective",
-    )
+
     for element in soup.find_all(["p", "li", "span", "div", "td"]):
         if element.find(["p", "li", "table"]):
             continue
         text = " ".join(element.get_text(" ", strip=True).split())
-        if not (25 <= len(text) <= 600):
+        if not (20 <= len(text) <= 6000):
+            continue
+        if _is_noise(text):
             continue
         lowered = text.lower()
-        if not any(word in lowered for word in keywords):
+        if not any(word in lowered for word in _NOTE_KEYWORDS):
             continue
-        if text in seen:
-            continue
-        seen.add(text)
-        notes.append(text)
+
+        for note in _split_numbered_notes(text):
+            if len(note) < 20 or _is_noise(note):
+                continue
+            if note in seen:
+                continue
+            seen.add(note)
+            notes.append(note)
+
     return notes
 
 
@@ -206,15 +258,16 @@ def _extract_specials(notes: list[str], category: str) -> dict[str, dict]:
     for note in notes:
         lowered = note.lower()
 
-        if category == "enlisted" and "e-1" in lowered.replace("e1", "e-1"):
-            if re.search(r"less than\s*(?:4|four)\s*months", lowered):
-                specials["e1_under_4_months"] = {
-                    "category": category,
-                    "pay_grade": "E-1",
-                    "label": "E-1 with less than 4 months of active duty",
-                    "monthly_rate": extract_note_amount(note),
-                    "note": note,
-                }
+        if re.search(r"\be-?1\b", lowered) and re.search(
+            r"less than\s*(?:4|four)\s*months", lowered
+        ):
+            specials["e1_under_4_months"] = {
+                "category": category,
+                "pay_grade": "E-1",
+                "label": "E-1 with less than 4 months of active duty",
+                "monthly_rate": extract_note_amount(note),
+                "note": note,
+            }
 
         if "senior enlisted" in lowered or re.search(
             r"\b(seac|sma|mcpon|cmsaf|smmc|cmssf|mcpocg)\b", lowered
@@ -226,6 +279,33 @@ def _extract_specials(notes: list[str], category: str) -> dict[str, dict]:
                     "Senior enlisted advisor billets (SEAC, SMA, MCPON, CMSAF, "
                     "SMMC, CMSSF, MCPOCG, SEA to CNGB) - flat rate regardless of "
                     "years of service"
+                ),
+                "monthly_rate": extract_note_amount(note),
+                "note": note,
+            }
+
+        # Service academy cadets/midshipmen and ROTC members are paid a flat
+        # rate that is not on the officer grid at all.
+        if re.search(r"academy cadet|midshipm|\brotc\b", lowered):
+            specials["academy_cadet_rotc"] = {
+                "category": category,
+                "pay_grade": None,
+                "label": (
+                    "Service academy cadets/midshipmen and ROTC members/"
+                    "applicants - flat rate, not on the pay grade table"
+                ),
+                "monthly_rate": extract_note_amount(note),
+                "note": note,
+            }
+
+        # The statutory cap: basic pay may not exceed Executive Schedule level II.
+        if "executive schedule" in lowered:
+            specials["executive_schedule_cap"] = {
+                "category": category,
+                "pay_grade": None,
+                "label": (
+                    "Basic pay is capped at the rate for level II of the "
+                    "Executive Schedule"
                 ),
                 "monthly_rate": extract_note_amount(note),
                 "note": note,

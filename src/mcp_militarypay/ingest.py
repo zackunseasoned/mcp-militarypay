@@ -105,7 +105,8 @@ def ingest_base_pay(
 
     warnings = list(table.warnings)
     for key, special in table.specials.items():
-        if special["monthly_rate"] is None:
+        if (special["monthly_rate"] is None
+                and key not in sources.INFORMATIONAL_SPECIAL_KEYS):
             warnings.append(
                 f"footnote for {key} found but no dollar amount could be read "
                 f"from it; the note text is stored, the rate is NULL"

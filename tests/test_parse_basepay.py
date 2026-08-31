@@ -82,3 +82,62 @@ class TestParseEnlistedPage:
         <tr><td>E-5</td><td>1.00</td><td>2.00</td></tr></table></body></html>"""
         table = parse_base_pay(html, "enlisted")
         assert any("missing expected pay grades" in w for w in table.warnings)
+
+
+class TestNoteExtraction:
+    """The live DFAS pages surround the real footnotes with site furniture, and
+    put several notes inside one block. Both broke the first implementation."""
+
+    def test_filters_breadcrumb_and_column_header_noise(self, enlisted_html):
+        """Both contain the word "Note", so keywords alone let them through."""
+        notes = parse_base_pay(enlisted_html, "enlisted").notes
+        assert not any("payentitlements" in n.lower() for n in notes)
+        # Only as a leading column header - the phrase legitimately appears
+        # inside the senior advisor note ("regardless of cumulative years...").
+        assert not any(
+            n.lower().startswith("cumulative years of service") for n in notes
+        )
+
+    def test_splits_a_multi_note_block_into_individual_notes(self, enlisted_html):
+        notes = parse_base_pay(enlisted_html, "enlisted").notes
+        assert any(n.startswith("1.") for n in notes)
+        assert any(n.startswith("2.") for n in notes)
+        assert any(n.startswith("3.") for n in notes)
+
+    def test_captures_senior_enlisted_advisor_inside_a_notes_block(self, enlisted_html):
+        """This note lives inside a NOTES block that an earlier 600-character
+        cap discarded, so the flat rate was silently never extracted."""
+        specials = parse_base_pay(enlisted_html, "enlisted").specials
+        assert specials["senior_enlisted_advisor"]["monthly_rate"] == 11166.90
+
+    def test_executive_schedule_cap_has_no_rate_by_design(self, enlisted_html):
+        """The cap references another schedule; a NULL rate is correct here."""
+        from mcp_militarypay.sources import INFORMATIONAL_SPECIAL_KEYS
+
+        specials = parse_base_pay(enlisted_html, "enlisted").specials
+        assert specials["executive_schedule_cap"]["monthly_rate"] is None
+        assert "executive_schedule_cap" in INFORMATIONAL_SPECIAL_KEYS
+
+
+def test_split_numbered_notes_keeps_dollar_amounts_intact():
+    """'$1,452.90. 2. Next' must not read '90.' as a note number."""
+    from mcp_militarypay.parsers.basepay import _split_numbered_notes
+
+    parts = _split_numbered_notes(
+        "NOTES: 1. Cadet pay is $1,452.90. 2. Something else entirely."
+    )
+    assert len(parts) == 2
+    assert parts[0] == "1. Cadet pay is $1,452.90."
+    assert parts[1] == "2. Something else entirely."
+
+
+def test_academy_cadet_rate_is_extracted():
+    """The officer page carries a cadet/ROTC rate that is not on the grid."""
+    from mcp_militarypay.parsers.basepay import _extract_specials
+
+    specials = _extract_specials(
+        ["1. Basic pay rate for Academy Cadets/Midshipmen and ROTC "
+         "members/applicants is $1,452.90."],
+        "officer",
+    )
+    assert specials["academy_cadet_rotc"]["monthly_rate"] == 1452.90

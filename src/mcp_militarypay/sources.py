@@ -6,6 +6,11 @@ it arrives in. Nothing here performs I/O.
 
 from __future__ import annotations
 
+# Specials that legitimately carry no dollar amount: they point at another
+# schedule rather than stating a rate, so a NULL here is correct, not a failed
+# extraction.
+INFORMATIONAL_SPECIAL_KEYS = frozenset({"executive_schedule_cap"})
+
 DISCLAIMER = (
     "Unofficial. This server reads published DFAS/DTMO rate tables; it does not "
     "read anyone's Leave and Earnings Statement and it is not an authoritative "
