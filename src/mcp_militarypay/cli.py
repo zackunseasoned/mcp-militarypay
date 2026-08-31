@@ -91,15 +91,102 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 # Values published by DFAS for 2026 and quoted in the build spec. The point of
 # checking them is to catch a parser that silently read the wrong column.
+def _special(conn, key: str, year: int = 2026):
+    row = conn.execute(
+        "SELECT monthly_rate FROM base_pay_special WHERE year = ? AND key = ?",
+        (year, key),
+    ).fetchone()
+    return row["monthly_rate"] if row else None
+
+
+def _has_category(conn, category: str, year: int = 2026) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM base_pay WHERE year = ? AND category = ? LIMIT 1",
+        (year, category),
+    ).fetchone())
+
+
+def _has_bas(conn) -> bool:
+    return bool(conn.execute("SELECT 1 FROM bas_rates LIMIT 1").fetchone())
+
+
+# (label, expected, getter, is-the-source-loaded predicate). A check whose
+# source was never ingested is skipped rather than reported as a mismatch:
+# ingesting only one category is a legitimate thing to do.
 KNOWN_VALUES = [
     ("2026 basic pay E-5 over 4", 3946.80,
-     lambda conn: queries.get_base_pay(conn, "E-5", 4, 2026).get("monthly_rate")),
+     lambda conn: queries.get_base_pay(conn, "E-5", 4, 2026).get("monthly_rate"),
+     lambda conn: _has_category(conn, "enlisted")),
     ("2026 BAS enlisted", 476.95,
-     lambda conn: queries.get_bas(conn, "enlisted", 2026).get("monthly_rate")),
+     lambda conn: queries.get_bas(conn, "enlisted", 2026).get("monthly_rate"),
+     _has_bas),
     ("2026 BAS officer", 328.48,
-     lambda conn: queries.get_bas(conn, "officer", 2026).get("monthly_rate")),
+     lambda conn: queries.get_bas(conn, "officer", 2026).get("monthly_rate"),
+     _has_bas),
     ("2026 BAS II", 953.90,
-     lambda conn: queries.get_bas(conn, "enlisted", 2026, bas_ii=True).get("monthly_rate")),
+     lambda conn: queries.get_bas(conn, "enlisted", 2026, bas_ii=True).get("monthly_rate"),
+     _has_bas),
+    # Footnote flat rates. The senior enlisted figure is here because a note on
+    # a different page once overwrote it with $225 (hostile fire pay).
+    ("2026 senior enlisted advisor flat rate", 11166.90,
+     lambda conn: _special(conn, "senior_enlisted_advisor"),
+     lambda conn: _has_category(conn, "enlisted")),
+    ("2026 E-1 under 4 months", 2225.70,
+     lambda conn: _special(conn, "e1_under_4_months"),
+     lambda conn: _has_category(conn, "enlisted")),
+    ("2026 academy cadet / ROTC", 1452.90,
+     lambda conn: _special(conn, "academy_cadet_rotc"),
+     lambda conn: _has_category(conn, "officer")),
+]
+
+
+def _check_senior_officer_collapse(conn) -> tuple[bool, str]:
+    """O-7..O-10 must share a rate within each MHA.
+
+    DTMO's own ASCII-FILE-FORMAT.pdf lists officer columns only up to O7 while
+    the files carry ten. If the extra three really are the collapsed senior
+    grades, they hold the O-7 value; if they are something else, the column
+    mapping past O-7 is wrong and this fails.
+    """
+    rows = list(conn.execute(
+        "SELECT rate_set, mha_code, with_dependents, "
+        "       COUNT(DISTINCT monthly_rate) AS distinct_rates "
+        "FROM bah_rates WHERE pay_grade IN ('O-7','O-8','O-9','O-10') "
+        "GROUP BY rate_set, mha_code, with_dependents "
+        "HAVING distinct_rates > 1 LIMIT 5"
+    ))
+    total = conn.execute("SELECT COUNT(*) FROM bah_rates").fetchone()[0]
+    if not total:
+        return True, "no BAH data loaded, skipped"
+    if rows:
+        examples = ", ".join(f"{r['mha_code']}({r['distinct_rates']} rates)" for r in rows)
+        return False, f"O-7..O-10 differ within an MHA: {examples}"
+    return True, "O-7..O-10 share a rate in every MHA"
+
+
+def _check_mha_names_are_clean(conn) -> tuple[bool, str]:
+    """MHA names must not start with a stray delimiter.
+
+    mhanames<yy>.txt is semicolon-delimited; stripping only commas left every
+    name as ";ANCHORAGE, AK".
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM bah_rates "
+        "WHERE mha_name IS NOT NULL AND TRIM(mha_name) GLOB '[;,:|]*'"
+    ).fetchone()
+    named = conn.execute(
+        "SELECT COUNT(*) FROM bah_rates WHERE mha_name IS NOT NULL"
+    ).fetchone()[0]
+    if not named:
+        return True, "no MHA names loaded, skipped"
+    if row["n"]:
+        return False, f"{row['n']} MHA names begin with a delimiter"
+    return True, "MHA names are free of stray delimiters"
+
+
+STRUCTURAL_CHECKS = [
+    ("BAH senior officer collapse", _check_senior_officer_collapse),
+    ("BAH MHA names", _check_mha_names_are_clean),
 ]
 
 
@@ -112,7 +199,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
     failures = 0
-    for label, expected, getter in KNOWN_VALUES:
+    skipped = 0
+    for label, expected, getter, loaded in KNOWN_VALUES:
+        if not loaded(conn):
+            print(f"[skip] {label}: source not ingested")
+            skipped += 1
+            continue
         try:
             actual = getter(conn)
         except Exception as exc:  # noqa: BLE001
@@ -128,7 +220,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"[FAIL] {label}: expected {expected}, got {actual}")
             failures += 1
 
-    print(f"\n{len(KNOWN_VALUES) - failures}/{len(KNOWN_VALUES)} known values matched.")
+    print()
+    for label, check in STRUCTURAL_CHECKS:
+        try:
+            ok, detail = check(conn)
+        except Exception as exc:  # noqa: BLE001
+            ok, detail = False, str(exc)
+        print(f"[{' ok ' if ok else 'FAIL'}] {label}: {detail}")
+        if not ok:
+            failures += 1
+
+    total = len(KNOWN_VALUES) + len(STRUCTURAL_CHECKS) - skipped
+    summary = f"\n{total - failures}/{total} checks passed."
+    if skipped:
+        summary += f" {skipped} skipped (source not ingested)."
+    print(summary)
     if failures:
         print(
             "A mismatch means either the published rates changed or a parser is "

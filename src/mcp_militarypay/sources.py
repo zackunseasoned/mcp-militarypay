@@ -95,10 +95,19 @@ def bah_inner_filenames(year: int) -> dict[str, str]:
 
 # Column layout of bahw<yy>.txt / bahwo<yy>.txt.
 #
-# These are headerless CSV files (not fixed-width). DTMO publishes no schema for
-# them; this layout is derived from the working reference consumer
-# mpyne-navy/bah-rate-map (MIT, CDR Mike Pyne USN), whose index.html documents a
-# sample row and slices it as E1-E9, W1-W5, O1E-O3E, O1-O10.
+# Headerless, comma-delimited files (not fixed-width). DTMO does ship a schema
+# after all - ASCII-FILE-FORMAT.pdf, inside the bundle itself - which confirms
+# the delimiter, the CHAR(5) MHA key, and this grade order, including the
+# counterintuitive part: O1E/O2E/O3E come BEFORE O1 and onwards.
+#
+# One discrepancy. That PDF's field list ends at O7, giving 25 fields, and it
+# runs off the bottom of its single page mid-list - so it appears truncated at
+# the page break rather than deliberately stopping there. The published files
+# carry 28 fields: the 2026 bundle parsed at exactly 28 across all 338 MHAs
+# (18,252 rows = 338 x 27 grades x 2 dependency statuses, with no remainder), and
+# a 25-field file would have failed the field-count check on line 1. The data
+# wins; the extra columns are the senior officer grades that the DTMO rate
+# lookup collapses into its "O-7/O-7+" bucket, and they carry the O-7 value.
 #
 # Field 0 is the MHA code; fields 1..27 are monthly rates in this grade order.
 BAH_RATE_COLUMNS: tuple[str, ...] = (

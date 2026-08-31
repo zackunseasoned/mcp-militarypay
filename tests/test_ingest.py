@@ -125,3 +125,37 @@ class TestSpecialRates:
     def test_notes_are_stored_verbatim(self, blank, enlisted_html):
         ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html)
         assert count(blank, "base_pay_note") > 0
+
+
+class TestCrossCategorySpecials:
+    """base_pay_special is keyed on (year, key), so any page can overwrite
+    another's entry. The prior-enlisted page's combat zone note once replaced
+    the real senior enlisted advisor rate with $225."""
+
+    def test_prior_enlisted_page_does_not_clobber_the_enlisted_rate(
+        self, blank, enlisted_html
+    ):
+        from tests.conftest import FIXTURES
+
+        prior = (FIXTURES / "dfas_officer_prior_enlisted_2026.html").read_text()
+        ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html)
+        ingest.ingest_base_pay(blank, "officer_prior_enlisted", html=prior)
+
+        rate = blank.execute(
+            "SELECT monthly_rate FROM base_pay_special "
+            "WHERE year = 2026 AND key = 'senior_enlisted_advisor'"
+        ).fetchone()["monthly_rate"]
+        assert rate == 11166.90
+
+    def test_order_of_ingest_does_not_matter(self, blank, enlisted_html):
+        from tests.conftest import FIXTURES
+
+        prior = (FIXTURES / "dfas_officer_prior_enlisted_2026.html").read_text()
+        ingest.ingest_base_pay(blank, "officer_prior_enlisted", html=prior)
+        ingest.ingest_base_pay(blank, "enlisted", html=enlisted_html)
+
+        rate = blank.execute(
+            "SELECT monthly_rate FROM base_pay_special "
+            "WHERE year = 2026 AND key = 'senior_enlisted_advisor'"
+        ).fetchone()["monthly_rate"]
+        assert rate == 11166.90

@@ -181,11 +181,18 @@ on:
 
 ### The BAH ASCII bundle format
 
-DTMO publishes **no schema** for these files. The layout below is derived from
-the working reference consumer
-[`mpyne-navy/bah-rate-map`](https://github.com/mpyne-navy/bah-rate-map) (MIT,
-CDR Mike Pyne USN), whose `index.html` documents a sample row and slices it
-exactly this way.
+DTMO does publish a schema, but it is shipped **inside the bundle itself** as
+`ASCII-FILE-FORMAT.pdf` rather than on the website. It confirms the delimiters,
+the `CHAR(5)` MHA key, and the grade order — including the counterintuitive
+part, that `O1E/O2E/O3E` come **before** `O1`.
+
+One discrepancy is worth knowing about: that PDF's field list stops at `O7`
+(25 fields) and runs off the bottom of its single page mid-list, so it appears
+truncated at the page break. The published files carry **28** fields. The data
+wins — the 2026 bundle parsed at exactly 28 across all 338 MHAs (18,252 rows =
+338 × 27 × 2, no remainder) — and `verify` includes a structural check that
+`O-7`…`O-10` share a rate within every MHA, which is what those extra columns
+must be if the mapping past `O-7` is right.
 
 `BAH-ASCII-<year>.zip` carries thirteen members; four are used:
 
@@ -239,7 +246,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-172 tests, no network required — the parsers run against fixtures in
+184 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

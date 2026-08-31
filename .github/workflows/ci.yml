@@ -53,6 +53,13 @@ jobs:
           python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
             --base-pay enlisted --from-file tests/fixtures/dfas_enlisted_2026.html
           python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --base-pay officer --from-file tests/fixtures/dfas_officer_2026.html
+          # Ingested last on purpose: this page's combat zone note once
+          # overwrote the enlisted senior advisor rate with $225.
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --base-pay officer_prior_enlisted \
+            --from-file tests/fixtures/dfas_officer_prior_enlisted_2026.html
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
             --bas --from-file tests/fixtures/dfas_bas.html
           python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
             --bah --year 2026 --from-file tests/fixtures/BAH-ASCII-2026.zip

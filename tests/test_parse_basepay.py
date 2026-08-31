@@ -141,3 +141,78 @@ def test_academy_cadet_rate_is_extracted():
         "officer",
     )
     assert specials["academy_cadet_rotc"]["monthly_rate"] == 1452.90
+
+
+class TestStatedRateExtraction:
+    """A rate must be stated AS a basic pay rate.
+
+    The live prior-enlisted officer page carries a combat zone tax exclusion
+    note that names "the senior enlisted member (grade E-9)" and "($225)".
+    Reading the first dollar figure out of a keyword-matched note reported the
+    senior enlisted advisor rate as $225 instead of $11,166.90 - a plausible
+    wrong number rather than a visible failure.
+    """
+
+    COMBAT_ZONE_NOTE = (
+        "1. The amount of the maximum combat zone tax exclusion in effect for a "
+        "qualifying month equals the sum of the basic pay for the senior enlisted "
+        "member (grade E-9) payable (Basic Pay - Enlisted, Note 3) and the amount "
+        "of hostile fire or imminent danger pay ($225) payable to the officer for "
+        "the qualifying month."
+    )
+    REAL_SEA_NOTE = (
+        "2. Basic pay for senior enlisted member (grade E-9) is $11,166.90 "
+        "regardless of years of service while serving as: a. Senior Enlisted "
+        "Advisor of the Chairman, Joint Chiefs of Staff;"
+    )
+
+    def test_reads_a_stated_basic_pay_rate(self):
+        from mcp_militarypay.parsers.basepay import extract_stated_pay_rate
+
+        assert extract_stated_pay_rate(self.REAL_SEA_NOTE) == 11166.90
+
+    def test_refuses_an_incidental_dollar_figure(self):
+        from mcp_militarypay.parsers.basepay import extract_stated_pay_rate
+
+        assert extract_stated_pay_rate(self.COMBAT_ZONE_NOTE) is None
+
+    def test_combat_zone_note_yields_no_special_at_all(self):
+        from mcp_militarypay.parsers.basepay import _extract_specials
+
+        assert _extract_specials([self.COMBAT_ZONE_NOTE], "officer_prior_enlisted") == {}
+
+    def test_specials_are_gated_to_the_publishing_category(self):
+        """Each page publishes its own rates; without this the pages clobber
+        one another through the shared (year, key) primary key."""
+        from mcp_militarypay.parsers.basepay import _extract_specials
+
+        cadet = ("1. Basic pay rate for Academy Cadets/Midshipmen and ROTC "
+                 "members/applicants is $1,452.90.")
+        assert "academy_cadet_rotc" in _extract_specials([cadet], "officer")
+        assert _extract_specials([cadet], "enlisted") == {}
+        assert "senior_enlisted_advisor" in _extract_specials(
+            [self.REAL_SEA_NOTE], "enlisted"
+        )
+        assert _extract_specials([self.REAL_SEA_NOTE], "warrant") == {}
+
+    def test_a_rateless_match_never_displaces_a_real_rate(self):
+        from mcp_militarypay.parsers.basepay import _extract_specials
+
+        specials = _extract_specials(
+            [self.REAL_SEA_NOTE, self.COMBAT_ZONE_NOTE], "enlisted"
+        )
+        assert specials["senior_enlisted_advisor"]["monthly_rate"] == 11166.90
+
+    def test_real_page_wording_yields_the_right_rate(self, enlisted_html):
+        specials = parse_base_pay(enlisted_html, "enlisted").specials
+        assert specials["senior_enlisted_advisor"]["monthly_rate"] == 11166.90
+        assert specials["e1_under_4_months"]["monthly_rate"] == 2225.70
+
+
+def test_table_row_labels_are_not_footnotes():
+    """The officer page put "O-1 (Notes 5, 6 & 7)" through the note filter."""
+    from mcp_militarypay.parsers.basepay import _is_noise
+
+    assert _is_noise("O-1 (Notes 5, 6 & 7)")
+    assert _is_noise("E-9 (Note 2)")
+    assert not _is_noise("1. Basic pay for an E-1 ... is $2,225.70.")

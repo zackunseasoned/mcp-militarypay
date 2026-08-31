@@ -82,11 +82,12 @@ _SUPERSEDED_RE = re.compile(r"\bold\b|\bprev(?:ious)?\b|\bbackup\b", re.IGNORECA
 def parse_mha_names(text: str) -> dict[str, str]:
     """Parse mhanames<yy>.txt: MHA code -> locality name.
 
-    DTMO's exact delimiter here is not documented, so this accepts the three
-    plausible forms without needing to know which is in use: the code followed
-    by whitespace, by a comma, or run directly against the name. Locality names
-    themselves contain commas ("ANCHORAGE, AK"), so only a leading field that is
-    exactly an MHA code is treated as the key.
+    DTMO's ASCII-FILE-FORMAT.pdf (shipped inside the bundle) specifies this file
+    as semicolon-delimited, MHA CHAR(5) and NAME/DESCRIPTION CHAR(40) - the name
+    is space-padded to a fixed width. Whitespace and comma separators are also
+    accepted so a format change does not silently produce names with a stray
+    leading delimiter. Locality names contain commas themselves ("ANCHORAGE,
+    AK"), so only a leading field that is exactly an MHA code is taken as a key.
     """
     names: dict[str, str] = {}
     for line in text.splitlines():
@@ -96,7 +97,7 @@ def parse_mha_names(text: str) -> dict[str, str]:
         code = stripped[:5].upper()
         if not _MHA_RE.match(code):
             continue
-        name = stripped[5:].strip().lstrip(",").strip().strip('"').strip()
+        name = stripped[5:].strip().lstrip(";,\t").strip().strip('"').strip()
         if name:
             names[code] = " ".join(name.split())
     return names

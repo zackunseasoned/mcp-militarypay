@@ -45,9 +45,14 @@ _NOISE_RE = re.compile(
     r"|pay\s+tables\s+basic\s+pay"
     r"|home\s+militarymembers"
     r"|^cumulative\s+years\s+of\s+service"
-    r"|^effective\s+\w+\s+\d",
+    r"|^effective\s+\w+\s+\d"
+    r"|^[ewo]-?\d{1,2}e?\s*\(notes?\b",   # a table row label, not a footnote
     re.IGNORECASE,
 )
+
+# Leading "1. " / "Note 4. " numbering, stripped when comparing notes for
+# duplicates so the same sentence is not stored both numbered and bare.
+_NOTE_NUMBER_RE = re.compile(r"^\s*\d{1,2}\.\s*")
 
 _NOTES_LABEL_RE = re.compile(r"^\s*notes?\s*:?\s*", re.IGNORECASE)
 
@@ -64,6 +69,30 @@ _NOTE_DOLLAR_RE = re.compile(
 )
 _NOTE_GROUPED_RE = re.compile(r"\b(\d{1,3}(?:,\d{3})+\.\d{2})\b")
 _NOTE_PREFIX_RE = re.compile(r"^\s*note\s*\d+\s*[.:)]?\s*", re.IGNORECASE)
+
+
+# A footnote states a rate as "basic pay ... is $X". Requiring that whole
+# construction is what separates "Basic pay ... is $11,166.90" from a note that
+# merely mentions senior enlisted members and happens to contain "($225)".
+# [^.$] stops the match running across a sentence boundary or a different sum.
+_BASIC_PAY_IS_RE = re.compile(
+    r"basic\s+pay\b[^.$]{0,140}?\bis\b[^.$]{0,40}?"
+    r"\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+\.\d{2})",
+    re.IGNORECASE,
+)
+
+
+def extract_stated_pay_rate(text: str) -> float | None:
+    """Read a rate that a footnote states as a basic pay rate.
+
+    Deliberately stricter than extract_note_amount: it will not fall back to
+    "first dollar figure in the note". A note whose wording changes yields None
+    and a loud warning, which is recoverable; a note that yields the wrong
+    number silently is not.
+    """
+    body = _NOTES_LABEL_RE.sub("", _NOTE_NUMBER_RE.sub("", text or "")).strip()
+    match = _BASIC_PAY_IS_RE.search(body)
+    return float(match.group(1).replace(",", "")) if match else None
 
 
 def extract_note_amount(text: str) -> float | None:
@@ -240,9 +269,10 @@ def _extract_notes(soup: BeautifulSoup) -> list[str]:
         for note in _split_numbered_notes(text):
             if len(note) < 20 or _is_noise(note):
                 continue
-            if note in seen:
+            key = _NOTE_NUMBER_RE.sub("", note).strip().lower()
+            if key in seen:
                 continue
-            seen.add(note)
+            seen.add(key)
             notes.append(note)
 
     return notes
@@ -251,42 +281,59 @@ def _extract_notes(soup: BeautifulSoup) -> list[str]:
 def _extract_specials(notes: list[str], category: str) -> dict[str, dict]:
     """Pull flat rates that override the YOS grid out of the footnote text.
 
-    Never invents a figure: if the note is present but no dollar amount can be
-    read out of it, monthly_rate stays None and the note text still surfaces.
+    Each special is accepted only from the category whose table actually
+    publishes it. Without that gate the pages clobber one another: the
+    prior-enlisted officer page carries a combat-zone tax-exclusion note
+    mentioning "the senior enlisted member (grade E-9)" and "($225)", which
+    otherwise overwrote the real $11,166.90 senior enlisted rate from the
+    enlisted page with $225.
+
+    Never invents a figure: where the note is present but no rate can be read
+    from it as a stated basic pay rate, monthly_rate stays None and the note
+    text still surfaces.
     """
     specials: dict[str, dict] = {}
     for note in notes:
         lowered = note.lower()
 
-        if re.search(r"\be-?1\b", lowered) and re.search(
+        if category == "enlisted" and re.search(r"\be-?1\b", lowered) and re.search(
             r"less than\s*(?:4|four)\s*months", lowered
         ):
             specials["e1_under_4_months"] = {
                 "category": category,
                 "pay_grade": "E-1",
                 "label": "E-1 with less than 4 months of active duty",
-                "monthly_rate": extract_note_amount(note),
+                "monthly_rate": extract_stated_pay_rate(note),
                 "note": note,
             }
 
-        if "senior enlisted" in lowered or re.search(
-            r"\b(seac|sma|mcpon|cmsaf|smmc|cmssf|mcpocg)\b", lowered
+        # The senior enlisted advisor rate is published on the enlisted table.
+        if category == "enlisted" and (
+            "senior enlisted" in lowered
+            or re.search(r"\b(seac|sma|mcpon|cmsaf|smmc|cmssf|mcpocg)\b", lowered)
         ):
-            specials["senior_enlisted_advisor"] = {
-                "category": category,
-                "pay_grade": None,
-                "label": (
-                    "Senior enlisted advisor billets (SEAC, SMA, MCPON, CMSAF, "
-                    "SMMC, CMSSF, MCPOCG, SEA to CNGB) - flat rate regardless of "
-                    "years of service"
-                ),
-                "monthly_rate": extract_note_amount(note),
-                "note": note,
-            }
+            rate = extract_stated_pay_rate(note)
+            # Notes about combat zone tax exclusion, hostile fire and imminent
+            # danger pay also name senior enlisted members but state no basic
+            # pay rate. Only keep an entry that actually carries one, and never
+            # let a rate-less match displace one already found.
+            if rate is not None or "senior_enlisted_advisor" not in specials:
+                specials["senior_enlisted_advisor"] = {
+                    "category": category,
+                    "pay_grade": "E-9",
+                    "label": (
+                        "Senior enlisted advisor billets (SEAC, SMA, MCPON, "
+                        "CMSAF, SMMC, CMSSF, MCPOCG, SEA to CNGB) - flat rate "
+                        "regardless of years of service"
+                    ),
+                    "monthly_rate": rate,
+                    "note": note,
+                }
 
-        # Service academy cadets/midshipmen and ROTC members are paid a flat
-        # rate that is not on the officer grid at all.
-        if re.search(r"academy cadet|midshipm|\brotc\b", lowered):
+        # Cadets/midshipmen and ROTC members are on the officer table.
+        if category == "officer" and re.search(
+            r"academy cadet|midshipm|\brotc\b", lowered
+        ):
             specials["academy_cadet_rotc"] = {
                 "category": category,
                 "pay_grade": None,
@@ -294,7 +341,7 @@ def _extract_specials(notes: list[str], category: str) -> dict[str, dict]:
                     "Service academy cadets/midshipmen and ROTC members/"
                     "applicants - flat rate, not on the pay grade table"
                 ),
-                "monthly_rate": extract_note_amount(note),
+                "monthly_rate": extract_stated_pay_rate(note),
                 "note": note,
             }
 
@@ -307,7 +354,7 @@ def _extract_specials(notes: list[str], category: str) -> dict[str, dict]:
                     "Basic pay is capped at the rate for level II of the "
                     "Executive Schedule"
                 ),
-                "monthly_rate": extract_note_amount(note),
+                "monthly_rate": extract_stated_pay_rate(note),
                 "note": note,
             }
     return specials

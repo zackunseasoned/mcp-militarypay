@@ -161,3 +161,34 @@ class TestBundle:
         assert bundle.mha_names == {}
         assert bundle.with_dependents.rates[("TX270", "E-5")] == 2000.0
         assert any("no MHA name file" in w for w in bundle.warnings)
+
+
+class TestDtmoSpecConformance:
+    """Checks against DTMO's own ASCII-FILE-FORMAT.pdf, shipped in the bundle."""
+
+    def test_mha_names_are_semicolon_delimited(self):
+        """The spec says semicolon-delimited, MHA CHAR(5), NAME CHAR(40).
+        A comma-only strip left every name prefixed with ';'."""
+        line = "AK400;" + "ANCHORAGE, AK".ljust(40)
+        assert parse_mha_names(line) == {"AK400": "ANCHORAGE, AK"}
+
+    def test_rate_columns_match_the_published_order(self):
+        """The spec confirms the counterintuitive part: O1E/O2E/O3E precede O1."""
+        from mcp_militarypay.sources import BAH_RATE_COLUMNS
+
+        assert BAH_RATE_COLUMNS[:9] == tuple(f"E-{i}" for i in range(1, 10))
+        assert BAH_RATE_COLUMNS[9:14] == tuple(f"W-{i}" for i in range(1, 6))
+        assert BAH_RATE_COLUMNS[14:17] == ("O-1E", "O-2E", "O-3E")
+        assert BAH_RATE_COLUMNS[17] == "O-1"
+        assert BAH_RATE_COLUMNS[23] == "O-7"
+
+    def test_senior_officer_tail_columns_repeat_the_o7_value(self, bah_zip_bytes):
+        """The spec's field list stops at O7 while the files carry ten officer
+        columns. The extra three are the collapsed senior grades, so they must
+        carry the O-7 value."""
+        rates = parse_bah_bundle(bah_zip_bytes, 2026).with_dependents.rates
+        for mha in ("AK400", "CA606", "TX270", "ZZ998"):
+            o7 = rates[(mha, "O-7")]
+            assert rates[(mha, "O-8")] == o7
+            assert rates[(mha, "O-9")] == o7
+            assert rates[(mha, "O-10")] == o7
