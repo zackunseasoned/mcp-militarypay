@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          # The deployment target is Windows with Python 3.14, so it gets a
+          # runner of its own rather than being assumed to behave like Linux.
+          - os: windows-latest
+            python: "3.14"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        # The suite is fully offline: parsers run against fixtures in
+        # tests/fixtures, so CI never reaches dfas.mil or travel.dod.mil.
+        run: python -m pytest -q
+
+      - name: Check the ingest pipeline end to end
+        # Builds a database from the fixtures and runs the same known-value
+        # check the CLI offers, so a parser reading the wrong column fails CI.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --base-pay enlisted --from-file tests/fixtures/dfas_enlisted_2026.html
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --bas --from-file tests/fixtures/dfas_bas.html
+          python -m mcp_militarypay.cli --db ci.sqlite3 ingest \
+            --bah --year 2026 --from-file tests/fixtures/BAH-ASCII-2026.zip
+          python -m mcp_militarypay.cli --db ci.sqlite3 verify

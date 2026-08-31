@@ -9,3 +9,6 @@ dist/
 
 # Built rate database and HTTP cache - rebuilt by the ingest, never committed.
 data/
+
+# Databases built by CI or a local run
+*.sqlite3

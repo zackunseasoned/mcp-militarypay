@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "anyio>=4.0"]  # anyio provides the pytest plugin the async server tests use
 
 [project.scripts]
 militarypay-ingest = "mcp_militarypay.cli:main"
