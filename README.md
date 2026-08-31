@@ -44,7 +44,12 @@ python -m mcp_militarypay.cli verify       # check against known published value
 python -m mcp_militarypay.cli status       # what's loaded, and when it was fetched
 python -m mcp_militarypay.cli probe        # diagnose HTTP 403s (see below)
 python -m mcp_militarypay.cli notes        # footnotes + flat rates captured
+python -m mcp_militarypay.cli lookup --grade E-5 --years 6 --zip 92101 --dependents
 ```
+
+`lookup` is an ad-hoc query for spot-checking against the published DFAS and
+DTMO lookups. It calls the same functions the MCP tools call, so a spot-check
+exercises the real path rather than a parallel one.
 
 `notes` prints the footnote text captured from the DFAS pages and the flat
 rates read out of it, flagging any rate that could not be extracted. Those
@@ -246,7 +251,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-184 tests, no network required — the parsers run against fixtures in
+192 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

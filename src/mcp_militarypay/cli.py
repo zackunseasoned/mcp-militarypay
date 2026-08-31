@@ -380,6 +380,85 @@ def cmd_notes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_component(title: str, result: dict) -> None:
+    print(f"-- {title} --")
+    if "error" in result:
+        print(f"   {result['error']}: {result.get('message','')}")
+        return
+    rate = result.get("monthly_rate")
+    if rate is None:
+        print(f"   monthly rate: none ({result.get('rate_basis','')})")
+        if result.get("explanation"):
+            print(f"   {result['explanation']}")
+    else:
+        taxable = result.get("taxable")
+        tax = "" if taxable is None else ("  (taxable)" if taxable else "  (non-taxable)")
+        print(f"   monthly rate: ${rate:,.2f}{tax}")
+    for field in ("mha_code", "mha_name", "rate_set", "effective_date",
+                  "yos_band_min", "rate_basis"):
+        if result.get(field) is not None:
+            print(f"   {field}: {result[field]}")
+    if result.get("source_url"):
+        print(f"   source: {result['source_url']}")
+    for note in result.get("notes", [])[:2]:
+        print(f"   note: {note[:100]}")
+
+
+def cmd_lookup(args: argparse.Namespace) -> int:
+    """Ad-hoc lookup against the loaded data.
+
+    Calls the same query functions the MCP tools call, so a spot-check against
+    the published DFAS/DTMO lookups exercises the real path rather than a
+    parallel one written for the CLI.
+    """
+    try:
+        conn = connect(args.db, read_only=True)
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    if not any([args.zip, args.years is not None, args.grade]):
+        print("give at least --grade with --years and/or --zip", file=sys.stderr)
+        return 2
+
+    try:
+        if args.grade and args.years is not None and args.zip:
+            result = queries.estimate_total_compensation(
+                conn, args.grade, args.years, args.zip, args.dependents, args.year,
+                months_active_duty=args.months_active_duty,
+                senior_enlisted_advisor=args.senior_enlisted_advisor,
+            )
+            for name, component in result["components"].items():
+                _print_component(name, component)
+            monthly = result["monthly"]
+            print("-- totals (monthly) --")
+            print(f"   taxable     : ${monthly['taxable_total']:,.2f}")
+            print(f"   non-taxable : ${monthly['non_taxable_total']:,.2f}")
+            print(f"   gross       : ${monthly['gross_total']:,.2f}")
+            print(f"   annual gross: ${result['annual']['gross_total']:,.2f}")
+            for name, message in (result.get("errors") or {}).items():
+                print(f"   [{name}] {message}", file=sys.stderr)
+            return 0 if result["complete"] else 1
+
+        if args.grade and args.years is not None:
+            _print_component("base pay", queries.get_base_pay(
+                conn, args.grade, args.years, args.year,
+                months_active_duty=args.months_active_duty,
+                senior_enlisted_advisor=args.senior_enlisted_advisor,
+            ))
+        if args.zip and args.grade:
+            _print_component("BAH", queries.get_bah(
+                conn, args.zip, args.grade, args.dependents, args.year,
+                as_of=args.as_of,
+            ))
+        if args.bas:
+            _print_component("BAS", queries.get_bas(conn, args.bas, args.year))
+    except queries.LookupError_ as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mcp_militarypay.cli",
@@ -432,6 +511,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_notes.add_argument("--category", choices=list(sources.BASE_PAY_CATEGORIES),
                          help="Limit footnotes to one category.")
     p_notes.set_defaults(func=cmd_notes)
+
+    p_lookup = sub.add_parser(
+        "lookup",
+        help="Ad-hoc rate lookup, for spot-checking against the published tables.",
+    )
+    p_lookup.add_argument("--grade", help="Pay grade, e.g. E-5, O-3, O-2E.")
+    p_lookup.add_argument("--years", type=float, help="Years of service.")
+    p_lookup.add_argument("--zip", help="5-digit ZIP code for BAH.")
+    p_lookup.add_argument("--dependents", action="store_true",
+                          help="Use the with-dependents BAH rate.")
+    p_lookup.add_argument("--bas", choices=["officer", "enlisted"],
+                          help="Also show the BAS rate for this type.")
+    p_lookup.add_argument("--year", type=int, help="Rate year (default: latest).")
+    p_lookup.add_argument("--as-of", help="ISO date; BAH rate in effect then.")
+    p_lookup.add_argument("--months-active-duty", type=int,
+                          help="Total months of active duty (affects E-1 only).")
+    p_lookup.add_argument("--senior-enlisted-advisor", action="store_true",
+                          help="Use the senior enlisted advisor flat rate.")
+    p_lookup.set_defaults(func=cmd_lookup)
 
     return parser
 
