@@ -15,6 +15,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from . import fetch as fetch_module
 from . import ingest as ingest_module
 from . import queries, sources
 from .db import default_db_path, open_for_ingest, connect
@@ -137,6 +138,72 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+# One representative URL per host: whatever the WAF does, it does per host.
+PROBE_URLS = [
+    ("dfas basic pay (enlisted)", sources.BASE_PAY_SOURCES["enlisted"]),
+    ("dfas BAS", sources.BAS_SOURCE),
+    ("dtmo BAH bundle", sources.bah_ascii_url(2026)),
+    ("dtmo BAH lookup page", sources.BAH_LOOKUP_PAGE),
+]
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    """Find out which request headers the DoD servers currently accept.
+
+    Both dfas.mil and travel.dod.mil sit behind a WAF that 403s clients not
+    presenting browser headers. Rather than guessing one profile at a time,
+    this tries each profile against each host and prints the matrix.
+    """
+    urls = [(args.label or "custom", args.url)] if args.url else PROBE_URLS
+    profiles = [args.profile] if args.profile else list(fetch_module.PROBE_PROFILES)
+
+    print("Probing the published rate table sources.\n")
+    for name, config in fetch_module.PROBE_PROFILES.items():
+        if name in profiles:
+            print(f"  {name:16s} {config['description']}")
+    print()
+
+    any_success = False
+    for label, url in urls:
+        print(f"{label}\n  {url}")
+        for profile in profiles:
+            result = fetch_module.probe_url(url, profile, timeout=args.timeout)
+            status = result.get("status")
+            if status == 200:
+                any_success = True
+                detail = (
+                    f"{result.get('http_version','')} "
+                    f"{result.get('content_type','')[:40]} "
+                    f"{result.get('content_length','')}"
+                ).strip()
+                print(f"    [ ok ] {profile:16s} 200  {detail}")
+            elif status is not None:
+                markers = result.get("waf_markers") or []
+                suffix = f"  markers={markers}" if markers else ""
+                server = result.get("server", "")
+                print(f"    [FAIL] {profile:16s} {status}"
+                      f"  server={server}{suffix}")
+            else:
+                print(f"    [FAIL] {profile:16s} {result.get('error','')[:110]}")
+        print()
+
+    if any_success:
+        print("At least one profile works. If it is not the default "
+              "(browser-http2), set it with $MILITARYPAY_USER_AGENT or report "
+              "which profile succeeded.")
+        return 0
+
+    print(
+        "No profile succeeded on any host.\n"
+        "That points at something between this machine and the servers rather "
+        "than at the request headers - a corporate/ISP filter, a DNS-level "
+        "block, or a geo/network restriction. Check whether the same URL loads "
+        "in a browser on this machine.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mcp_militarypay.cli",
@@ -169,6 +236,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_verify = sub.add_parser("verify", help="Check loaded data against known published values.")
     p_verify.set_defaults(func=cmd_verify)
+
+    p_probe = sub.add_parser(
+        "probe",
+        help="Diagnose HTTP 403s: report which request headers the sources accept.",
+    )
+    p_probe.add_argument("--url", help="Probe one specific URL instead of all sources.")
+    p_probe.add_argument("--label", help="Label for a custom --url.")
+    p_probe.add_argument("--profile", choices=list(fetch_module.PROBE_PROFILES),
+                         help="Try only this header profile.")
+    p_probe.add_argument("--timeout", type=float, default=30.0)
+    p_probe.set_defaults(func=cmd_probe)
 
     return parser
 

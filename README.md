@@ -42,6 +42,7 @@ python -m venv .venv
 python -m mcp_militarypay.cli ingest --all --year 2026
 python -m mcp_militarypay.cli verify       # check against known published values
 python -m mcp_militarypay.cli status       # what's loaded, and when it was fetched
+python -m mcp_militarypay.cli probe        # diagnose HTTP 403s (see below)
 ```
 
 The database defaults to `data/militarypay.sqlite3`; override with `--db` or the
@@ -71,6 +72,43 @@ MHA keeps the annual rate. Pass `as_of` to a lookup to get the rate in effect on
 a given date. Prior years are never overwritten on refresh — BAH **individual
 rate protection** means a member with uninterrupted eligibility doesn't take a
 decrease when published rates drop, so historical rates must stay queryable.
+
+## Troubleshooting: HTTP 403 from DFAS / DTMO
+
+Both `dfas.mil` and `travel.dod.mil` sit behind a WAF that rejects clients which
+don't look like a browser. A custom `User-Agent` gets an outright **HTTP 403 on
+every URL, on both hosts** — which is what the first live run of this project
+hit. These are public rate tables with no authentication, no login and no API
+key, so the fix is simply to send the ordinary header set a browser sends, and
+that is now the default (a current Chrome UA, the usual `Accept` /
+`Sec-Fetch-*` / `sec-ch-ua` headers, over HTTP/2).
+
+If a future WAF change breaks it again, don't guess one profile at a time:
+
+```bash
+python -m mcp_militarypay.cli probe
+```
+
+This tries four header profiles against each host and prints which ones get a
+200, along with any WAF markers in the rejection body:
+
+| Profile | What it isolates |
+|---|---|
+| `project-ua` | the original custom User-Agent (the one that 403'd) |
+| `httpx-default` | no custom headers at all |
+| `browser` | full browser header set over HTTP/1.1 |
+| `browser-http2` | full browser header set over HTTP/2 — the current default |
+
+Then override the agent if a different one is needed:
+
+```bash
+export MILITARYPAY_USER_AGENT="..."     # Windows: $env:MILITARYPAY_USER_AGENT
+```
+
+`probe` distinguishes the two failure modes that look alike from the outside:
+an HTTP status code means the server answered and rejected the request, while a
+transport or proxy error means something between you and the server blocked it
+(a corporate/ISP filter or an egress policy) and no header change will help.
 
 ## Run the server
 
@@ -185,7 +223,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-143 tests, no network required — the parsers run against fixtures in
+157 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

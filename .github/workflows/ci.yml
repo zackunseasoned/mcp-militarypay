@@ -40,7 +40,8 @@ jobs:
 
       - name: Run tests
         # The suite is fully offline: parsers run against fixtures in
-        # tests/fixtures, so CI never reaches dfas.mil or travel.dod.mil.
+        # tests/fixtures and the HTTP layer against httpx.MockTransport, so CI
+        # never reaches dfas.mil or travel.dod.mil.
         run: python -m pytest -q
 
       - name: Check the ingest pipeline end to end
