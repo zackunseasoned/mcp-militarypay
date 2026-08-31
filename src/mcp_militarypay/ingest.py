@@ -226,7 +226,8 @@ def ingest_bah(
     rows = 0
     for rate_file in (bundle.with_dependents, bundle.without_dependents):
         payload = [
-            (rate_set_id, mha, None, grade, 1 if rate_file.with_dependents else 0, rate)
+            (rate_set_id, mha, bundle.mha_names.get(mha), grade,
+             1 if rate_file.with_dependents else 0, rate)
             for (mha, grade), rate in rate_file.rates.items()
             if keep is None or mha in keep
         ]

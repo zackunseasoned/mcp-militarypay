@@ -5,11 +5,20 @@ working reference consumer mpyne-navy/bah-rate-map (MIT, CDR Mike Pyne USN),
 whose index.html documents a sample row and slices it E1-E9, W1-W5, O1E-O3E,
 O1-O10.
 
-The bundle (BAH-ASCII-<year>.zip) contains three files:
+The bundle (BAH-ASCII-<year>.zip) carries more than the three files this
+project needs. The 2026 bundle holds thirteen members:
 
   sorted_zipmha<yy>.txt  space-delimited "ZIP MHA" crosswalk (~41k US ZIPs)
-  bahw<yy>.txt           rates WITH dependents
-  bahwo<yy>.txt          rates WITHOUT dependents
+  bahw<yy>.txt           rates WITH dependents          <- used
+  bahwo<yy>.txt          rates WITHOUT dependents       <- used
+  mhanames<yy>.txt       MHA code -> locality name      <- used
+  ASCII-FILE-FORMAT.pdf  DTMO's own layout documentation
+  *.dat, *_<yy>.dat      the same data in other encodings
+  "* - old.txt/.dat"     the PREVIOUS publication, kept alongside the current
+
+Those "- old" members are a live hazard: they end in .txt and share the
+bahw/bahwo prefixes, so a filename-prefix fallback can silently ingest last
+publication's rates. They are excluded explicitly.
 
 The rate files are headerless CSV - not fixed-width - with 28 fields:
 field 0 is the MHA code, fields 1..27 are monthly rates in BAH_RATE_COLUMNS
@@ -57,12 +66,40 @@ class BahBundle:
 
     year: int
     zip_to_mha: dict[str, str] = field(default_factory=dict)
+    mha_names: dict[str, str] = field(default_factory=dict)
     with_dependents: BahRateFile | None = None
     without_dependents: BahRateFile | None = None
     warnings: list[str] = field(default_factory=list)
 
 
 _MHA_RE = re.compile(r"^[A-Z]{2}\d{3}$")
+
+# Members like "bahw26 - old.txt" are the previous publication. They must never
+# be picked up by a prefix fallback.
+_SUPERSEDED_RE = re.compile(r"\bold\b|\bprev(?:ious)?\b|\bbackup\b", re.IGNORECASE)
+
+
+def parse_mha_names(text: str) -> dict[str, str]:
+    """Parse mhanames<yy>.txt: MHA code -> locality name.
+
+    DTMO's exact delimiter here is not documented, so this accepts the three
+    plausible forms without needing to know which is in use: the code followed
+    by whitespace, by a comma, or run directly against the name. Locality names
+    themselves contain commas ("ANCHORAGE, AK"), so only a leading field that is
+    exactly an MHA code is treated as the key.
+    """
+    names: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("\ufeff")
+        if not stripped:
+            continue
+        code = stripped[:5].upper()
+        if not _MHA_RE.match(code):
+            continue
+        name = stripped[5:].strip().lstrip(",").strip().strip('"').strip()
+        if name:
+            names[code] = " ".join(name.split())
+    return names
 
 
 def parse_zip_mha(text: str) -> dict[str, str]:
@@ -160,7 +197,9 @@ def _read_member(archive: zipfile.ZipFile, expected_name: str, prefix: str) -> t
     if chosen is None:
         candidates = sorted(
             actual for base, actual in by_base.items()
-            if base.startswith(prefix.lower()) and base.endswith(".txt")
+            if base.startswith(prefix.lower())
+            and base.endswith(".txt")
+            and not _SUPERSEDED_RE.search(base)
         )
         if not candidates:
             raise ParseError(
@@ -180,14 +219,31 @@ def parse_bah_bundle(zip_bytes: bytes, year: int, *, keep_raw: bool = True) -> B
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
         members = [n.rsplit("/", 1)[-1] for n in archive.namelist() if not n.endswith("/")]
-        if len(members) != 3:
+        superseded = sorted(m for m in members if _SUPERSEDED_RE.search(m))
+        if superseded:
             bundle.warnings.append(
-                f"expected 3 files in the {year} BAH bundle, found "
-                f"{len(members)}: {sorted(members)}"
+                f"the {year} bundle also ships the previous publication "
+                f"({superseded}); these are ignored"
             )
 
         zip_name, zip_text = _read_member(archive, expected["zip_mha"], "sorted_zipmha")
         bundle.zip_to_mha = parse_zip_mha(zip_text)
+
+        # MHA names are a nicety rather than a requirement: a bundle without
+        # them still yields correct rates, just without locality labels.
+        try:
+            _, names_text = _read_member(archive, expected["mha_names"], "mhanames")
+            bundle.mha_names = parse_mha_names(names_text)
+            if not bundle.mha_names:
+                bundle.warnings.append(
+                    f"{expected['mha_names']} was present but no MHA names could "
+                    f"be parsed from it"
+                )
+        except ParseError:
+            bundle.warnings.append(
+                f"no MHA name file in the {year} bundle; rates will have no "
+                f"locality names"
+            )
 
         wd_name, wd_text = _read_member(archive, expected["with_dependents"], "bahw")
         wo_name, wo_text = _read_member(archive, expected["without_dependents"], "bahwo")

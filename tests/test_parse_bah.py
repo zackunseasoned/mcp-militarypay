@@ -6,6 +6,7 @@ import pytest
 from mcp_militarypay.parsers.bah import (
     ParseError,
     parse_bah_bundle,
+    parse_mha_names,
     parse_rate_file,
     parse_zip_mha,
 )
@@ -65,14 +66,37 @@ class TestRateFile:
         assert parsed.raw_lines and parsed.raw_lines[0][0] == 1
 
 
+class TestMhaNames:
+    """DTMO's delimiter here is undocumented, so all plausible forms parse."""
+
+    @pytest.mark.parametrize(
+        "line",
+        ["AK400ANCHORAGE, AK", "AK400 ANCHORAGE, AK", 'AK400,"ANCHORAGE, AK"'],
+    )
+    def test_accepts_each_delimiter_form(self, line):
+        assert parse_mha_names(line) == {"AK400": "ANCHORAGE, AK"}
+
+    def test_skips_lines_without_an_mha_code(self):
+        assert parse_mha_names("header row\n\nAK400 ANCHORAGE, AK\n") == {
+            "AK400": "ANCHORAGE, AK"
+        }
+
+    def test_ignores_a_code_with_no_name(self):
+        assert parse_mha_names("AK400\n") == {}
+
+
 class TestBundle:
-    def test_parses_all_three_files(self, bah_zip_bytes):
+    def test_parses_the_members_it_needs(self, bah_zip_bytes):
         bundle = parse_bah_bundle(bah_zip_bytes, 2026)
         assert bundle.year == 2026
         assert bundle.zip_to_mha["79601"] == "TX270"
         assert bundle.with_dependents.rates[("TX270", "E-5")] > 0
         assert bundle.without_dependents.rates[("TX270", "E-5")] > 0
-        assert bundle.warnings == []
+
+    def test_reads_mha_locality_names(self, bah_zip_bytes):
+        bundle = parse_bah_bundle(bah_zip_bytes, 2026)
+        assert bundle.mha_names["TX270"] == "ABILENE/DYESS AFB, TX"
+        assert bundle.mha_names["CA606"] == "SAN DIEGO, CA"
 
     def test_with_dependents_rates_exceed_without(self, bah_zip_bytes):
         bundle = parse_bah_bundle(bah_zip_bytes, 2026)
@@ -105,12 +129,35 @@ class TestBundle:
         with pytest.raises(ParseError):
             parse_bah_bundle(buffer.getvalue(), 2099)
 
-    def test_warns_when_bundle_does_not_hold_three_files(self):
+    def test_ignores_the_superseded_publication(self, bah_zip_bytes):
+        """The bundle ships last publication's rates under "- old" names. They
+        end in .txt and share the bahw/bahwo prefixes, so a prefix fallback
+        could silently ingest them."""
+        bundle = parse_bah_bundle(bah_zip_bytes, 2026)
+        # The fixture's "- old" files carry deliberately different values.
+        assert bundle.with_dependents.rates[("TX270", "E-5")] == 2320.0
+        assert any("previous publication" in w for w in bundle.warnings)
+
+    def test_prefix_fallback_skips_superseded_members(self):
+        """Even when the expected filename is absent, "- old" is never chosen."""
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("sorted_zipmha_new.txt", "79601 TX270\n")
+            archive.writestr("bahw_new.txt", _row(value=2000))
+            archive.writestr("bahw_new - old.txt", _row(value=9999))
+            archive.writestr("bahwo_new.txt", _row(value=1800))
+            archive.writestr("bahwo_new - old.txt", _row(value=9999))
+        bundle = parse_bah_bundle(buffer.getvalue(), 2099)
+        assert bundle.with_dependents.rates[("TX270", "E-5")] == 2000.0
+        assert bundle.without_dependents.rates[("TX270", "E-5")] == 1800.0
+
+    def test_missing_mha_names_is_a_warning_not_a_failure(self):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("sorted_zipmha26.txt", "79601 TX270\n")
             archive.writestr("bahw26.txt", _row(value=2000))
             archive.writestr("bahwo26.txt", _row(value=1800))
-            archive.writestr("readme.txt", "extra")
         bundle = parse_bah_bundle(buffer.getvalue(), 2026)
-        assert any("expected 3 files" in w for w in bundle.warnings)
+        assert bundle.mha_names == {}
+        assert bundle.with_dependents.rates[("TX270", "E-5")] == 2000.0
+        assert any("no MHA name file" in w for w in bundle.warnings)

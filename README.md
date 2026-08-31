@@ -179,13 +179,21 @@ the working reference consumer
 CDR Mike Pyne USN), whose `index.html` documents a sample row and slices it
 exactly this way.
 
-`BAH-ASCII-<year>.zip` contains three files:
+`BAH-ASCII-<year>.zip` carries thirteen members; four are used:
 
 | File | Format |
 |---|---|
 | `sorted_zipmha<yy>.txt` | Space-delimited `ZIP MHA` (~41k US ZIPs) |
 | `bahw<yy>.txt` | Rates **with** dependents |
 | `bahwo<yy>.txt` | Rates **without** dependents |
+| `mhanames<yy>.txt` | MHA code → locality name |
+
+The rest are `.dat` encodings of the same data, DTMO's own
+`ASCII-FILE-FORMAT.pdf`, and — importantly — the **previous publication** under
+`"* - old.txt"` / `"* - old.dat"` names. Those superseded files end in `.txt`
+and share the `bahw`/`bahwo` prefixes, so a filename-prefix fallback can
+silently ingest last publication's rates. They are excluded explicitly and
+tested for.
 
 The rate files are **headerless CSV — not fixed-width** — with 28 fields:
 
@@ -223,7 +231,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-157 tests, no network required — the parsers run against fixtures in
+166 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

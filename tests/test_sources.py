@@ -59,5 +59,6 @@ def test_bah_inner_filenames():
         "zip_mha": "sorted_zipmha26.txt",
         "with_dependents": "bahw26.txt",
         "without_dependents": "bahwo26.txt",
+        "mha_names": "mhanames26.txt",
     }
     assert bah_inner_filenames(2023)["with_dependents"] == "bahw23.txt"

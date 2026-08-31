@@ -99,6 +99,11 @@ class TestBah:
         assert result["effective_date"] == "2026-01-01"
         assert result["source_url"]
 
+    def test_resolves_the_mha_locality_name(self, conn):
+        """An MHA code alone is unreadable; the bundle ships the names."""
+        assert q.get_bah(conn, "92101", "E-5", True)["mha_name"] == "SAN DIEGO, CA"
+        assert q.get_bah(conn, "79601", "E-5", True)["mha_name"] == "ABILENE/DYESS AFB, TX"
+
     def test_rate_protection_is_always_noted(self, conn):
         notes = " ".join(q.get_bah(conn, "92101", "E-5", True)["notes"])
         assert "rate protection" in notes

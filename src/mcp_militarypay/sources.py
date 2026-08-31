@@ -64,6 +64,7 @@ BAH_ASCII_URL_TEMPLATE = (
 BAH_ZIP_MHA_FILE = "sorted_zipmha{yy}.txt"
 BAH_WITH_DEPN_FILE = "bahw{yy}.txt"
 BAH_WITHOUT_DEPN_FILE = "bahwo{yy}.txt"
+BAH_MHA_NAMES_FILE = "mhanames{yy}.txt"
 
 
 def bah_ascii_url(year: int) -> str:
@@ -73,15 +74,17 @@ def bah_ascii_url(year: int) -> str:
 def bah_inner_filenames(year: int) -> dict[str, str]:
     """Expected member names inside BAH-ASCII-<year>.zip.
 
-    Verified for 2023 against the Makefile of mpyne-navy/bah-rate-map (MIT).
-    The two-digit-year substitution for other years is inferred, so the reader
-    falls back to matching by filename prefix when an exact name is absent.
+    Confirmed against the live 2026 bundle, which ships thirteen members: these
+    four plus DTMO's own ASCII-FILE-FORMAT.pdf, .dat variants, and the previous
+    publication under "- old" names. The reader falls back to a filename-prefix
+    match when an exact name is absent, excluding the superseded members.
     """
     yy = f"{year % 100:02d}"
     return {
         "zip_mha": BAH_ZIP_MHA_FILE.format(yy=yy),
         "with_dependents": BAH_WITH_DEPN_FILE.format(yy=yy),
         "without_dependents": BAH_WITHOUT_DEPN_FILE.format(yy=yy),
+        "mha_names": BAH_MHA_NAMES_FILE.format(yy=yy),
     }
 
 
