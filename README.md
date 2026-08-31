@@ -43,7 +43,13 @@ python -m mcp_militarypay.cli ingest --all --year 2026
 python -m mcp_militarypay.cli verify       # check against known published values
 python -m mcp_militarypay.cli status       # what's loaded, and when it was fetched
 python -m mcp_militarypay.cli probe        # diagnose HTTP 403s (see below)
+python -m mcp_militarypay.cli notes        # footnotes + flat rates captured
 ```
+
+`notes` prints the footnote text captured from the DFAS pages and the flat
+rates read out of it, flagging any rate that could not be extracted. Those
+patterns are the most fragile part of the ingest, so this is the quickest way
+to check them against the live page.
 
 The database defaults to `data/militarypay.sqlite3`; override with `--db` or the
 `MILITARYPAY_DB` environment variable.

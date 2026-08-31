@@ -204,6 +204,71 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_notes(args: argparse.Namespace) -> int:
+    """Show the footnote text and flat rates extracted from the DFAS pages.
+
+    These footnotes carry real entitlement logic (the E-1 under-4-months rate,
+    the senior enlisted advisor flat rate), and the patterns that pull rates out
+    of them are the most fragile part of the ingest. This prints what was
+    actually captured so it can be checked against the live page.
+    """
+    try:
+        conn = connect(args.db, read_only=True)
+    except FileNotFoundError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    year = args.year or queries.latest_base_pay_year(conn)
+    if year is None:
+        print("no basic pay data loaded", file=sys.stderr)
+        return 1
+
+    print(f"=== flat rates that override the years-of-service grid ({year}) ===")
+    specials = list(conn.execute(
+        "SELECT key, category, pay_grade, label, monthly_rate, note "
+        "FROM base_pay_special WHERE year = ? ORDER BY key", (year,)))
+    if not specials:
+        print("  (none extracted)")
+    missing = 0
+    for row in specials:
+        rate = row["monthly_rate"]
+        marker = "[ ok ]" if rate is not None else "[MISSING RATE]"
+        if rate is None:
+            missing += 1
+        print(f"  {marker} {row['key']}")
+        print(f"          rate:  {rate}")
+        print(f"          label: {row['label']}")
+        print(f"          note:  {row['note']}")
+
+    print(f"\n=== footnote text captured ({year}) ===")
+    query = "SELECT category, note FROM base_pay_note WHERE year = ?"
+    params: list = [year]
+    if args.category:
+        query += " AND category = ?"
+        params.append(args.category)
+    query += " ORDER BY category, note"
+
+    current = None
+    count = 0
+    for row in conn.execute(query, params):
+        if row["category"] != current:
+            current = row["category"]
+            print(f"\n-- {current} --")
+        print(f"  {row['note']}")
+        count += 1
+    if not count:
+        print("  (none captured)")
+
+    if missing:
+        print(
+            f"\n{missing} flat rate(s) have no dollar amount. The note text "
+            f"above is stored verbatim - send it over and the extraction "
+            f"pattern can be matched to the real wording.",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mcp_militarypay.cli",
@@ -247,6 +312,15 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Try only this header profile.")
     p_probe.add_argument("--timeout", type=float, default=30.0)
     p_probe.set_defaults(func=cmd_probe)
+
+    p_notes = sub.add_parser(
+        "notes",
+        help="Show captured DFAS footnotes and the flat rates read from them.",
+    )
+    p_notes.add_argument("--year", type=int, help="Pay table year (default: latest).")
+    p_notes.add_argument("--category", choices=list(sources.BASE_PAY_CATEGORIES),
+                         help="Limit footnotes to one category.")
+    p_notes.set_defaults(func=cmd_notes)
 
     return parser
 
