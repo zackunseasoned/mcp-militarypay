@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import re
+
 from .sources import (
     BAH_SENIOR_OFFICER_GRADES,
     COMMON_MHA_PREFIX,
@@ -17,6 +19,14 @@ from .sources import (
     category_for_grade,
     normalize_pay_grade,
 )
+
+
+_MHA_CODE_RE = re.compile(r"^[A-Z]{2}\d{3}$")
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so a query of '100%' searches for that literally."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class LookupError_(ValueError):
@@ -306,6 +316,98 @@ def get_bah(
         "individual's actual rate may be a prior year's higher rate."
     )
     return result
+
+
+def find_housing_areas(
+    conn: sqlite3.Connection,
+    query: str,
+    year: int | None = None,
+    *,
+    limit: int = 25,
+) -> dict:
+    """Find Military Housing Areas by name, MHA code or ZIP code.
+
+    BAH is published per housing area, and get_bah takes a ZIP. Without this a
+    caller asking about a place has to supply a ZIP from its own knowledge, and
+    a wrong guess resolves to some other real area and returns a confident
+    answer for the wrong locality. This lets the area be looked up instead.
+
+    DTMO names areas for localities ("VALLEJO/TRAVIS AFB, CA", "HUNTSVILLE,
+    AL"), so a name search matches the locality; an installation only matches
+    where DTMO happened to name the area after it.
+    """
+    text = (query or "").strip()
+    if not text:
+        raise LookupError_("give a housing area name, MHA code or ZIP code to search for")
+
+    year = year or latest_bah_year(conn)
+    if year is None:
+        raise LookupError_(
+            "no BAH data loaded. Run: python -m mcp_militarypay.cli ingest --all"
+        )
+
+    areas = "SELECT DISTINCT r.mha_code, r.mha_name FROM bah_rates r " \
+            "JOIN bah_rate_set s ON s.id = r.rate_set WHERE s.year = ?"
+    matched: list[sqlite3.Row] = []
+    matched_by = None
+
+    if _MHA_CODE_RE.match(text.upper()):
+        matched = list(conn.execute(
+            areas + " AND r.mha_code = ?", (year, text.upper())))
+        matched_by = "mha_code"
+
+    if not matched and text.isdigit() and len(text) <= 5:
+        zip_code = text.zfill(5)
+        matched = list(conn.execute(
+            areas + " AND r.mha_code = ("
+            "  SELECT z.mha_code FROM zip_to_mha z JOIN bah_rate_set zs "
+            "  ON zs.id = z.rate_set WHERE z.zip_code = ? AND zs.year = ? "
+            "  AND zs.is_annual_baseline = 1 LIMIT 1)",
+            (year, zip_code, year)))
+        matched_by = "zip_code"
+
+    if not matched:
+        matched = list(conn.execute(
+            areas + " AND r.mha_name LIKE ? ESCAPE '\\' "
+            "ORDER BY LENGTH(r.mha_name), r.mha_name LIMIT ?",
+            (year, f"%{_escape_like(text)}%", limit + 1)))
+        matched_by = "name"
+
+    truncated = len(matched) > limit
+    matched = matched[:limit]
+
+    results = []
+    for row in matched:
+        zips = list(conn.execute(
+            "SELECT z.zip_code FROM zip_to_mha z JOIN bah_rate_set s "
+            "ON s.id = z.rate_set WHERE s.year = ? AND s.is_annual_baseline = 1 "
+            "AND z.mha_code = ? ORDER BY z.zip_code",
+            (year, row["mha_code"])))
+        codes = [z["zip_code"] for z in zips]
+        results.append({
+            "mha_code": row["mha_code"],
+            "mha_name": row["mha_name"],
+            "zip_code_count": len(codes),
+            # Enough to pass to get_bah, without returning thousands.
+            "example_zip_codes": codes[:5],
+            "is_common_mha": row["mha_code"].startswith(COMMON_MHA_PREFIX),
+        })
+
+    return {
+        "query": text,
+        "matched_by": matched_by,
+        "year": year,
+        "count": len(results),
+        "truncated": truncated,
+        "housing_areas": results,
+        "notes": [
+            "Pass any of the example ZIP codes to get_bah to get rates for that "
+            "area.",
+            "Areas are named for localities, so an installation matches only "
+            "where the published name includes it.",
+        ],
+        "disclaimer": DISCLAIMER,
+    }
 
 
 # --- BAS ------------------------------------------------------------------

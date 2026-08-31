@@ -237,6 +237,7 @@ All five are read-only (`readOnlyHint`, `idempotentHint`, `openWorldHint: false`
 |---|---|
 | `get_base_pay(pay_grade, years_of_service, year?, months_active_duty?, senior_enlisted_advisor?)` | Monthly basic pay (taxable) plus applicable footnotes |
 | `get_bah(zip_code, pay_grade, has_dependents, year?, as_of?)` | Monthly BAH (non-taxable), resolved MHA code, rate set and effective date |
+| `find_housing_area(query, year?, limit?)` | The Military Housing Area for a place, MHA code or ZIP, with ZIP codes to query it with |
 | `get_bas(pay_grade_type, year?, bas_ii?)` | Monthly BAS (non-taxable) |
 | `estimate_total_compensation(pay_grade, years_of_service, zip_code, has_dependents, ...)` | Base pay + BAH + BAS with a per-component breakdown and taxable/non-taxable split |
 | `get_database_status()` | What data is loaded and when each source was last fetched |
@@ -261,6 +262,15 @@ on:
 - **BAS II is never a default.** It's a conditional rate (2× standard enlisted
   BAS) requiring Service Secretary authorization; returned only when asked for.
 - **BAH rate protection** is noted on every BAH response.
+- **Housing areas are looked up, not guessed.** BAH is published per Military
+  Housing Area but `get_bah` takes a ZIP, so a caller with only a place name
+  would otherwise supply a ZIP from memory — and a wrong one resolves to
+  another real area and returns a confident rate for the wrong locality.
+  `find_housing_area` searches by locality name, MHA code or ZIP and returns
+  ZIP codes to pass on. DTMO names areas for localities, so an installation
+  matches only where the published name includes it (`Travis AFB` finds
+  `VALLEJO/TRAVIS AFB, CA`; Redstone Arsenal is inside `HUNTSVILLE, AL`) — the
+  tool description says so, so a miss is not read as "no such place".
 
 ## Data sources
 

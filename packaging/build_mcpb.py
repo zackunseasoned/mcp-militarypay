@@ -134,6 +134,8 @@ def build_manifest(version: str, command: str) -> dict:
              "description": "Monthly basic pay for a pay grade and years of service"},
             {"name": "get_bah",
              "description": "Monthly Basic Allowance for Housing for a ZIP code and pay grade"},
+            {"name": "find_housing_area",
+             "description": "Find the Military Housing Area for a place, and ZIP codes to query it with"},
             {"name": "get_bas",
              "description": "Monthly Basic Allowance for Subsistence"},
             {"name": "estimate_total_compensation",

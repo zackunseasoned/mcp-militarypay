@@ -175,6 +175,27 @@ def get_bah(
 
 
 @mcp.tool(annotations=_READ_ONLY)
+def find_housing_area(
+    query: Annotated[str, Field(description="A locality name ('San Diego'), an MHA code ('CA038'), or a ZIP code.")],
+    year: Annotated[int | None, Field(description="BAH year. Defaults to the most recent loaded.")] = None,
+    limit: Annotated[int, Field(ge=1, le=100, description="Maximum areas to return.")] = 25,
+) -> dict[str, Any]:
+    """Find the Military Housing Area for a place, and ZIP codes to query it with.
+
+    Use this before get_bah whenever you have a place name rather than a ZIP
+    code, instead of supplying a ZIP from memory: a wrong ZIP resolves to some
+    other real housing area and returns a confident rate for the wrong
+    locality. Each result carries example ZIP codes to pass to get_bah.
+
+    Areas are named for localities, so a military installation matches only
+    where the published name happens to include it - "Travis AFB" finds
+    "VALLEJO/TRAVIS AFB, CA", but Redstone Arsenal is inside "HUNTSVILLE, AL".
+    If a base name finds nothing, search the nearest city instead.
+    """
+    return _run(queries.find_housing_areas, query, year, limit=limit)
+
+
+@mcp.tool(annotations=_READ_ONLY)
 def get_bas(
     pay_grade_type: Annotated[Literal["officer", "enlisted"], Field(description="'officer' (including warrant officers) or 'enlisted'.")],
     year: Annotated[int | None, Field(description="Year. Defaults to the most recent loaded.")] = None,

@@ -28,7 +28,7 @@ async def test_all_tools_are_read_only(mcp_client):
     async with mcp_client as client:
         tools = await client.list_tools()
     assert {t.name for t in tools} == {
-        "get_base_pay", "get_bah", "get_bas",
+        "get_base_pay", "get_bah", "find_housing_area", "get_bas",
         "estimate_total_compensation", "get_database_status",
     }
     for tool in tools:
@@ -207,7 +207,7 @@ async def test_server_runs_over_a_real_stdio_transport(db_path):
     async with Client(transport) as client:
         tools = await client.list_tools()
         assert {t.name for t in tools} == {
-            "get_base_pay", "get_bah", "get_bas",
+            "get_base_pay", "get_bah", "find_housing_area", "get_bas",
             "estimate_total_compensation", "get_database_status",
         }
 
@@ -236,3 +236,28 @@ async def test_server_runs_over_a_real_stdio_transport(db_path):
         # Still alive after the error.
         result = await client.call_tool("get_bas", {"pay_grade_type": "enlisted"})
         assert payload(result)["monthly_rate"] == 476.95
+
+
+@pytest.mark.anyio
+async def test_find_housing_area_then_get_bah(mcp_client):
+    """The intended two-step: look the area up, then use a ZIP it returns —
+    instead of supplying one from memory and silently hitting the wrong area."""
+    async with mcp_client as client:
+        found = payload(await client.call_tool(
+            "find_housing_area", {"query": "Abilene"}))
+        assert found["housing_areas"][0]["mha_code"] == "TX270"
+
+        zip_code = found["housing_areas"][0]["example_zip_codes"][0]
+        rate = payload(await client.call_tool(
+            "get_bah",
+            {"zip_code": zip_code, "pay_grade": "E-5", "has_dependents": True}))
+    assert rate["mha_code"] == "TX270"
+
+
+@pytest.mark.anyio
+async def test_find_housing_area_reports_no_match_without_erroring(mcp_client):
+    async with mcp_client as client:
+        result = payload(await client.call_tool(
+            "find_housing_area", {"query": "Atlantis"}))
+    assert result["count"] == 0
+    assert "error" not in result

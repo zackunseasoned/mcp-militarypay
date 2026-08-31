@@ -255,3 +255,56 @@ class TestInvalidCombinationInTotals:
         result = q.estimate_total_compensation(conn, "E-5", 4, "92101", True)
         assert result["complete"] is True
         assert "errors" not in result
+
+
+class TestFindHousingAreas:
+    """BAH is published per housing area but get_bah takes a ZIP, so without a
+    lookup a caller has to supply one from memory - and a wrong ZIP resolves to
+    another real area and returns a confident rate for the wrong locality."""
+
+    def test_finds_by_locality_name(self, conn):
+        result = q.find_housing_areas(conn, "San Diego")
+        assert result["matched_by"] == "name"
+        assert [a["mha_code"] for a in result["housing_areas"]] == ["CA606"]
+
+    def test_name_search_is_case_insensitive(self, conn):
+        assert q.find_housing_areas(conn, "abilene")["housing_areas"][0]["mha_code"] == "TX270"
+
+    def test_finds_by_mha_code(self, conn):
+        result = q.find_housing_areas(conn, "CA606")
+        assert result["matched_by"] == "mha_code"
+        assert result["housing_areas"][0]["mha_name"] == "SAN DIEGO, CA"
+
+    def test_finds_by_zip_code(self, conn):
+        result = q.find_housing_areas(conn, "79601")
+        assert result["matched_by"] == "zip_code"
+        assert result["housing_areas"][0]["mha_code"] == "TX270"
+
+    def test_returns_zips_usable_with_get_bah(self, conn):
+        """The point of the tool: what it returns can be passed straight on."""
+        area = q.find_housing_areas(conn, "San Diego")["housing_areas"][0]
+        assert area["zip_code_count"] >= 1
+        rate = q.get_bah(conn, area["example_zip_codes"][0], "E-5", True)
+        assert rate["mha_code"] == area["mha_code"]
+
+    def test_flags_a_nationwide_common_area(self, conn):
+        result = q.find_housing_areas(conn, "ZZ998")
+        assert result["housing_areas"][0]["is_common_mha"] is True
+
+    def test_no_match_is_an_empty_result_not_an_error(self, conn):
+        result = q.find_housing_areas(conn, "Nowhere-in-particular")
+        assert result["count"] == 0
+        assert result["housing_areas"] == []
+
+    def test_an_empty_query_is_rejected(self, conn):
+        with pytest.raises(LookupError_):
+            q.find_housing_areas(conn, "   ")
+
+    def test_like_wildcards_are_taken_literally(self, conn):
+        """'%' must search for a percent sign, not match every area."""
+        assert q.find_housing_areas(conn, "%")["count"] == 0
+
+    def test_limit_is_honoured_and_truncation_reported(self, conn):
+        result = q.find_housing_areas(conn, ",", limit=1)
+        assert len(result["housing_areas"]) <= 1
+        assert result["truncated"] is True
