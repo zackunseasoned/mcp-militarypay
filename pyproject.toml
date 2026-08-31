@@ -35,3 +35,7 @@ mcp_militarypay = ["schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A warning from our own code is a defect we have not looked at yet, so fail on
+# it. Third-party deprecations get added here explicitly rather than ignored
+# wholesale.
+filterwarnings = ["error"]
