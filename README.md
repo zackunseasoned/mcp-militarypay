@@ -167,12 +167,29 @@ Register it with an MCP client (stdio transport):
 {
   "mcpServers": {
     "militarypay": {
-      "command": "C:\\Python314\\python.exe",
+      "command": "C:\\path\\to\\mcp-militarypay\\.venv\\Scripts\\python.exe",
       "args": ["-m", "mcp_militarypay.server"],
-      "env": { "MILITARYPAY_DB": "C:\\path\\to\\militarypay.sqlite3" }
+      "env": { "MILITARYPAY_DB": "C:\\path\\to\\mcp-militarypay\\data\\militarypay.sqlite3" }
     }
   }
 }
+```
+
+**`command` must be the interpreter from the virtual environment the package
+was installed into**, not a system Python. A system interpreter cannot import
+`mcp_militarypay` and the server exits with `ModuleNotFoundError` before it
+speaks any MCP, which a client reports only as a server that failed to start.
+Check it before restarting the client:
+
+```bash
+/path/to/.venv/bin/python -c "import mcp_militarypay; print('ok')"
+```
+
+The virtual environment also installs a console script, which avoids the
+question entirely — use it as `command` with no `args`:
+
+```
+.venv/bin/militarypay-mcp          # Windows: .venv\Scripts\militarypay-mcp.exe
 ```
 
 ## Tools
