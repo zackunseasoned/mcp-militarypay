@@ -157,6 +157,10 @@ transport or proxy error means something between you and the server blocked it
 python -m mcp_militarypay.server
 ```
 
+The suite includes an integration test that launches this as a subprocess and
+speaks MCP to it over stdio, so the entry point, negotiation and error handling
+are covered on the same path a real client uses — including on Windows in CI.
+
 Register it with an MCP client (stdio transport):
 
 ```json
@@ -296,7 +300,7 @@ Active Duty Pay Days"), so page structure is treated as unstable:
 .venv/bin/python -m pytest
 ```
 
-251 tests, no network required — the parsers run against fixtures in
+252 tests, no network required — the parsers run against fixtures in
 `tests/fixtures/`. Those fixtures are **synthetic**: they reproduce the
 documented *structure* of each source, and only the following figures are real
 published values, used as the assertions:

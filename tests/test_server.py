@@ -181,3 +181,58 @@ async def test_reconfigure_takes_effect_on_worker_threads(db_path, tmp_path):
         assert str(other) in second["database_path"]
     finally:
         server.configure(None)
+
+
+@pytest.mark.anyio
+async def test_server_runs_over_a_real_stdio_transport(db_path):
+    """Launch the server as a subprocess and speak MCP to it, the way a client
+    does.
+
+    Everything else exercises the tools in-process. This is the only check that
+    the console entry point starts, negotiates, and answers over stdio - the
+    path an actual MCP client uses and the one a packaging or import error
+    would break without failing any other test.
+    """
+    import os
+    import sys
+
+    from fastmcp.client.transports import StdioTransport
+
+    transport = StdioTransport(
+        command=sys.executable,
+        args=["-m", "mcp_militarypay.server"],
+        env=dict(os.environ, MILITARYPAY_DB=str(db_path)),
+    )
+
+    async with Client(transport) as client:
+        tools = await client.list_tools()
+        assert {t.name for t in tools} == {
+            "get_base_pay", "get_bah", "get_bas",
+            "estimate_total_compensation", "get_database_status",
+        }
+
+        result = await client.call_tool(
+            "get_base_pay", {"pay_grade": "E-5", "years_of_service": 4}
+        )
+        assert payload(result)["monthly_rate"] == 3946.80
+
+        result = await client.call_tool(
+            "estimate_total_compensation",
+            {"pay_grade": "E-5", "years_of_service": 4,
+             "zip_code": "92101", "has_dependents": True},
+        )
+        data = payload(result)
+        assert data["complete"] is True
+        assert data["monthly"]["taxable_total"] == 3946.80
+
+        # A failed lookup must come back as a structured result, not a crash
+        # that takes the subprocess down.
+        result = await client.call_tool(
+            "get_bah",
+            {"zip_code": "99999", "pay_grade": "E-5", "has_dependents": False},
+        )
+        assert payload(result)["error"] == "lookup_failed"
+
+        # Still alive after the error.
+        result = await client.call_tool("get_bas", {"pay_grade_type": "enlisted"})
+        assert payload(result)["monthly_rate"] == 476.95
